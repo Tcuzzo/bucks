@@ -1,0 +1,14 @@
+# BUCKS build/packaging artifacts — never committed.
+/bucks
+/bucks.exe
+cmd/bucks/bucks
+cmd/bucks/bucks.exe
+/dist/out/
+*.zip
+SHA256SUMS
+
+# Secrets at rest — never committed (the whole point of the secrets layer).
+*.age
+secrets.age
+bucks.yaml
+killswitch.json

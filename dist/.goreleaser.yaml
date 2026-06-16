@@ -1,0 +1,62 @@
+# GoReleaser config for BUCKS (used in CI where goreleaser is installed; the portable
+# equivalent for a plain box is dist/make_bucks_zip.sh).
+#
+# Produces the SAME artifact shape: one static CGO_ENABLED=0 -trimpath binary per
+# OS/arch, reproducible (fixed ldflags), bundled with LICENSE + NOTICE + README + the
+# guided installers into BUCKS_<os>_<arch>.zip, plus checksums. NO secrets are ever
+# packaged. The actual GitHub release/push is operator-gated (see dist/ship.sh) — this
+# file only describes how to BUILD the artifacts.
+version: 2
+
+project_name: bucks
+
+before:
+  hooks:
+    # Verify the license gate is green before building anything (the CI gate).
+    - go test ./internal/license/ -run TestScanCuratedRealTreePasses -count=1
+    - go mod tidy
+
+builds:
+  - id: bucks
+    main: ./cmd/bucks
+    binary: bucks
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.buildDate={{.CommitDate}}
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # Reproducible: pin the build timestamp to the commit date, not wall-clock.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: bucks
+    formats: [zip]
+    name_template: "BUCKS_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - src: dist/install.sh
+        dst: install.sh
+      - src: dist/install.ps1
+        dst: install.ps1
+
+checksum:
+  name_template: "SHA256SUMS"
+  algorithm: sha256
+
+# Release is intentionally NOT auto-published here — the operator runs dist/ship.sh
+# with their own GitHub remote + credentials. `goreleaser release --skip=publish`
+# builds the artifacts locally without pushing.
+release:
+  disable: true

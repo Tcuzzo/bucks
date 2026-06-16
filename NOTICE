@@ -1,0 +1,115 @@
+BUCKS — THIRD-PARTY NOTICES AND ATTRIBUTIONS
+=============================================
+
+BUCKS is licensed under the MIT License (see LICENSE). BUCKS bundles and links the
+third-party Go modules listed below. Each is used under its own permissive license;
+the required attributions are reproduced here. No (A)GPL/LGPL/MPL (copyleft) code is
+included anywhere in the tree — this is enforced at build time by the license gate
+(internal/license), which HARD-FAILS the build on any copyleft or any un-reviewed
+dependency.
+
+The SPDX id beside each module reflects that module's own LICENSE file as read from
+the Go module cache. Full license texts ship with each module's source and are
+available in the Go module cache / each project's repository.
+
+----------------------------------------------------------------------------------
+DEPENDENCIES (module — SPDX license)
+----------------------------------------------------------------------------------
+
+Trading / brokers:
+  github.com/alpacahq/alpaca-trade-api-go/v3   Apache-2.0   (Alpaca Markets — Go SDK)
+
+Money math:
+  github.com/govalues/decimal                  MIT          (zero-alloc fixed-point decimal — BUCKS's money type)
+  github.com/shopspring/decimal                MIT          (decimal, used by a dependency)
+
+Terminal UI (the guided-unpack wizard + live dashboard):
+  github.com/charmbracelet/bubbletea           MIT
+  github.com/charmbracelet/lipgloss            MIT
+  github.com/charmbracelet/colorprofile        MIT
+  github.com/charmbracelet/x/ansi              MIT
+  github.com/charmbracelet/x/cellbuf           MIT
+  github.com/charmbracelet/x/term              MIT
+  github.com/aymanbagabas/go-osc52/v2          MIT
+  github.com/clipperhouse/displaywidth         MIT
+  github.com/clipperhouse/stringish            MIT
+  github.com/clipperhouse/uax29/v2             MIT
+  github.com/erikgeiser/coninput               MIT
+  github.com/lucasb-eyer/go-colorful           MIT
+  github.com/mattn/go-isatty                   MIT
+  github.com/mattn/go-localereader             MIT
+  github.com/mattn/go-runewidth                MIT
+  github.com/muesli/ansi                       MIT
+  github.com/muesli/cancelreader               MIT
+  github.com/muesli/termenv                    MIT
+  github.com/rivo/uniseg                       MIT
+  github.com/xo/terminfo                       MIT
+
+Capability-probe (broker OpenAPI/docs parsing):
+  github.com/pb33f/libopenapi                  MIT
+  github.com/pb33f/jsonpath                    Apache-2.0
+  github.com/pb33f/ordered-map/v2              Apache-2.0
+  github.com/bahlo/generic-list-go             BSD-3-Clause
+  github.com/buger/jsonparser                  MIT
+  github.com/dustin/go-humanize                MIT
+  github.com/josharian/intern                  MIT
+  github.com/mailru/easyjson                   MIT
+  go.yaml.in/yaml/v4                           Apache-2.0
+
+Config / serialization:
+  gopkg.in/yaml.v3                             MIT
+
+Secrets at rest (keychain + encrypted-file fallback):
+  github.com/zalando/go-keyring                MIT          (OS keychain access)
+  github.com/danieljoos/wincred                MIT          (Windows Credential Manager backend)
+  github.com/godbus/dbus/v5                    BSD-2-Clause  (Linux Secret Service backend)
+  filippo.io/age                               BSD-3-Clause  (age encryption — headless-Linux encrypted-file fallback)
+  filippo.io/hpke                              BSD-3-Clause  (used by age)
+  golang.org/x/crypto                          BSD-3-Clause
+
+Local memory store:
+  modernc.org/sqlite                           BSD-3-Clause  (pure-Go SQLite — no cgo)
+  modernc.org/libc                             BSD-3-Clause
+  modernc.org/mathutil                         BSD-3-Clause
+  modernc.org/memory                           BSD-3-Clause
+  github.com/ncruces/go-strftime               MIT
+  github.com/remyoudompheng/bigfft             BSD-3-Clause
+
+Standard-library extensions & misc (all permissive):
+  github.com/google/uuid                       BSD-3-Clause
+  github.com/rogpeppe/go-internal              BSD-3-Clause
+  github.com/kr/text                           MIT
+  golang.org/x/sync                            BSD-3-Clause
+  golang.org/x/sys                             BSD-3-Clause
+  golang.org/x/text                            BSD-3-Clause
+  cloud.google.com/go                          Apache-2.0    (pulled by an indirect dependency)
+
+----------------------------------------------------------------------------------
+PATTERNS WE REDESIGNED AS OUR OWN (inspired by, NOT vendored)
+----------------------------------------------------------------------------------
+
+These BUCKS subsystems were STUDIED from the best prior art and RE-IMPLEMENTED
+natively for BUCKS. We do not vendor or copy their code, and we do not brand BUCKS
+internals after a source. We tip the hat here:
+
+  - The deterministic event kernel / message bus (one engine, two clocks for
+    backtest and live) — inspired by the NautilusTrader architecture and the
+    crash-only / reconcile-on-boot pattern. Re-implemented as BUCKS's own kernel.
+
+  - The order durability spine (deterministic client-order-ID, write-ahead intent
+    journal, reconcile-from-broker on boot, explicit order state machine with
+    cumulative-fill accounting) — informed by FIX-protocol ClOrdID idempotency and
+    WAL/ARIES durability. BUCKS's own implementation.
+
+  - The capability-probe pipeline (fetch a broker's OpenAPI/docs, draft a capability
+    map, verify with read-only live calls, keep writes locked until a paper run +
+    operator confirm) — BUCKS's own design over libopenapi.
+
+  - The memory knowledge-graph / store — BUCKS's own lean SQLite + Obsidian-vault
+    design, not a copy of any external KG.
+
+  - The licensing gate and secrets-at-rest layer in this very package — BUCKS's own
+    native implementations of widely-known ideas (license scanning; OS keychain with
+    an age-encrypted fallback), not vendored tools.
+
+All third-party CODE we link is credited above. The PATTERNS above are ours.
