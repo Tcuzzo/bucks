@@ -215,6 +215,65 @@ func completeHappyPath(t *testing.T, goLive bool) WizardModel {
 	return m
 }
 
+// TestFreeNemotronLLMOptionIsSelectable proves the new "4) Free (NVIDIA Nemotron)"
+// backend option is selectable at the LLM step, confirms cleanly, and lands in the
+// SetupResult as LLMNemotronFree — the no-paid-key, no-Ollama path. The on-screen
+// guidance must point the owner at the free build.nvidia.com key.
+func TestFreeNemotronLLMOptionIsSelectable(t *testing.T) {
+	m := NewWizard()
+	m, _ = send(t, m, enter()) // welcome -> telegram
+	m = typeString(t, m, "123456789:AAH-validlookingtoken")
+	m, _ = send(t, m, enter()) // telegram -> llm
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("did not reach StepLLM; at %v", m.CurrentStep())
+	}
+	// Pick option 4 (free Nemotron) and confirm.
+	m = typeString(t, m, "4")
+	if m.llm != LLMNemotronFree {
+		t.Fatalf("after pressing 4, llm = %q, want %q", m.llm, LLMNemotronFree)
+	}
+	// The on-screen guidance for the selected free option must name the free signup.
+	v := m.View()
+	if !strings.Contains(v, "Free (NVIDIA Nemotron)") {
+		t.Errorf("LLM view missing the free-Nemotron choice label; view:\n%s", v)
+	}
+	if !strings.Contains(v, "build.nvidia.com") {
+		t.Errorf("free-Nemotron guidance missing the build.nvidia.com signup hint; view:\n%s", v)
+	}
+	m, _ = send(t, m, enter()) // llm -> broker
+	if m.CurrentStep() != StepBroker {
+		t.Fatalf("free-Nemotron choice did not advance; at %v err=%q", m.CurrentStep(), m.Err())
+	}
+
+	// Drive the rest of the wizard and assert the choice persists into the result.
+	m = typeString(t, m, "1") // Alpaca paper
+	m = typeString(t, m, "PKtestbrokerkey123")
+	m, _ = send(t, m, enter())                    // key -> secret sub-prompt
+	m = typeString(t, m, "SKtestbrokersecret456") // secret
+	m, _ = send(t, m, enter())                    // -> intake
+	m = answerIntake(t, m)                        // -> safety
+	m, _ = send(t, m, enter())                    // -> done
+	if !m.Done() {
+		t.Fatalf("wizard not done; err=%q", m.Err())
+	}
+	if got := m.Result().LLM; got != LLMNemotronFree {
+		t.Errorf("SetupResult.LLM = %q, want %q", got, LLMNemotronFree)
+	}
+}
+
+// TestLLMChoiceValidity pins which LLM choices are valid (including the new free
+// option) and that a zero/garbage choice is rejected.
+func TestLLMChoiceValidity(t *testing.T) {
+	for _, c := range []LLMChoice{LLMOAuthGPT, LLMCloudKey, LLMBoth, LLMNemotronFree} {
+		if !c.valid() {
+			t.Errorf("LLMChoice %q should be valid", c)
+		}
+	}
+	if LLMChoice("garbage").valid() {
+		t.Error("an unknown LLMChoice must be invalid")
+	}
+}
+
 // TestEmptyTelegramTokenIsRejected proves an invalid (empty) answer blocks the
 // step with an inline error and NEVER advances or crashes.
 func TestEmptyTelegramTokenIsRejected(t *testing.T) {

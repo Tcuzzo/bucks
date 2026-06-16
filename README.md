@@ -45,6 +45,15 @@ first-timer, switching by who it is talking to.
 
 ---
 
+## Talk to BUCKS (v1.1)
+
+BUCKS isn't just a config screen — you can **talk to him like a person**:
+
+- **Chat** (`bucks chat`) — ask him anything, plain or technical; he code-switches to match you, stays honest, and **won't invent your account numbers or promise profit**. Any figure he states about your account is grounded against the real numbers.
+- **Summaries** (`bucks summary`) — a plain-English "here's where you stand" of your P&L, positions, and health, with the numbers checked against reality.
+- **Research** (`bucks research "<topic>"`, `bucks read <url>`) — read-only web lookups for market context, every claim traceable to a cited source. No stray orders, no headless browser — it stays one clean binary.
+- **A free brain** — no Ollama and no paid key? Pick **Free (NVIDIA Nemotron)** at setup, paste a free `nvapi-` key from build.nvidia.com (~2 min, no card), and you're running. Groq / Cerebras / OpenRouter work the same way.
+
 ## Getting started — the guided unwrap
 
 BUCKS ships as a **single file** (one static binary, no installer to fight). The guided

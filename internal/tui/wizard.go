@@ -93,11 +93,16 @@ const (
 	LLMCloudKey LLMChoice = "cloud-key"
 	// LLMBoth wires both backends (one as primary, the other as fallback).
 	LLMBoth LLMChoice = "both"
+	// LLMNemotronFree routes reasoning through the FREE NVIDIA NIM Nemotron model —
+	// the path for an owner with NO Ollama and NO paid key. They paste a free,
+	// no-credit-card nvapi-... key from build.nvidia.com (a ~2-minute signup). This
+	// maps to BUCKS_CHAT_PROVIDER=nemotron + the analyst OpenAICompatBackend.
+	LLMNemotronFree LLMChoice = "nemotron-free"
 )
 
 func (c LLMChoice) valid() bool {
 	switch c {
-	case LLMOAuthGPT, LLMCloudKey, LLMBoth:
+	case LLMOAuthGPT, LLMCloudKey, LLMBoth, LLMNemotronFree:
 		return true
 	default:
 		return false
@@ -347,7 +352,9 @@ func (m WizardModel) updateTelegram(k tea.KeyMsg) WizardModel {
 	return m.editInput(k)
 }
 
-// updateLLM: 1=OAuth-GPT, 2=cloud key, 3=both; enter confirms the current choice.
+// updateLLM: 1=OAuth-GPT, 2=cloud key, 3=both, 4=free NVIDIA Nemotron; enter
+// confirms the current choice. Option 4 is the no-paid-key, no-Ollama path: the
+// owner pastes a free nvapi-... key at first chat (the on-screen guidance says how).
 func (m WizardModel) updateLLM(k tea.KeyMsg) WizardModel {
 	if k.Type == tea.KeyRunes {
 		switch string(k.Runes) {
@@ -360,12 +367,15 @@ func (m WizardModel) updateLLM(k tea.KeyMsg) WizardModel {
 		case "3":
 			m.llm = LLMBoth
 			m.errMsg = ""
+		case "4":
+			m.llm = LLMNemotronFree
+			m.errMsg = ""
 		}
 		return m
 	}
 	if k.Type == tea.KeyEnter {
 		if !m.llm.valid() {
-			m.errMsg = "Pick a backend: 1) OAuth-GPT  2) cloud key  3) both."
+			m.errMsg = "Pick a backend: 1) OAuth-GPT  2) cloud key  3) both  4) Free (NVIDIA Nemotron)."
 			return m
 		}
 		return m.advance()

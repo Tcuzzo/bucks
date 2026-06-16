@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -32,12 +33,49 @@ func main() {
 // run parses flags and dispatches. It is split out from main so the dispatch is
 // testable without exiting the process.
 func run(args []string) error {
+	// `bucks chat` — the conversational REPL (you talk to BUCKS like a person). It is
+	// a positional subcommand handled BEFORE flag parsing so a bare `bucks chat` works;
+	// the `--chat` flag below is the equivalent flag form. The backend is configured by
+	// env (BUCKS_CHAT_BASEURL / _KEY / _MODEL); with none it prints a clear message.
+	if len(args) > 0 && args[0] == "chat" {
+		return runChatStdio()
+	}
+
+	// `bucks summary` — print a plain-English, GROUNDED account summary. Like `chat`
+	// it is a positional subcommand handled before flag parsing; it reuses the same
+	// BUCKS_CHAT_* env backend, and with none it prints a clear message (no crash).
+	if len(args) > 0 && args[0] == "summary" {
+		return runSummaryStdio()
+	}
+
+	// `bucks research "<query>"` — read-only web research: search the web, read the
+	// top results, print a plain-English brief with its CITED sources. Like chat, it
+	// uses the BUCKS_CHAT_* env backend; with none it prints a clear message (no crash).
+	if len(args) > 0 && args[0] == "research" {
+		return runResearchStdio(strings.TrimSpace(strings.Join(args[1:], " ")))
+	}
+
+	// `bucks read <url>` — the direct "read this page and tell me plain-English" path
+	// (keyless, no search). Reads the URL read-only and summarizes it, citing the URL.
+	if len(args) > 0 && args[0] == "read" {
+		url := ""
+		if len(args) > 1 {
+			url = args[1]
+		}
+		return runReadStdio(url)
+	}
+
 	fs := flag.NewFlagSet("bucks", flag.ContinueOnError)
 	daemon := fs.Bool("daemon", false, "run headless (no TUI) under a service manager")
 	paperSmoke := fs.Bool("paper-smoke", false, "boot the saved config into a paper trader and place one in-band paper trade (offline acceptance), then exit")
+	chatFlag := fs.Bool("chat", false, "open the conversational REPL — talk to BUCKS like a person (backend via BUCKS_CHAT_BASEURL/_KEY/_MODEL)")
 	configPath := fs.String("config", defaultConfigPath(), "path to the BUCKS config file")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *chatFlag {
+		return runChatStdio()
 	}
 
 	if *paperSmoke {

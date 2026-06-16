@@ -81,7 +81,13 @@ func (m WizardModel) View() string {
 		b.WriteString(choiceLine("1", "OAuth-GPT", m.llm == LLMOAuthGPT))
 		b.WriteString(choiceLine("2", "Cloud API key", m.llm == LLMCloudKey))
 		b.WriteString(choiceLine("3", "Both (primary + fallback)", m.llm == LLMBoth))
-		b.WriteString(m.styles.hint.Render("  [1/2/3] pick   [enter] confirm   [esc] back\n"))
+		b.WriteString(choiceLine("4", "Free (NVIDIA Nemotron)", m.llm == LLMNemotronFree))
+		if m.llm == LLMNemotronFree {
+			b.WriteString(m.styles.hint.Render(
+				"  Free brain — no paid key, no Ollama needed. Get a free nvapi-... key at\n" +
+					"  build.nvidia.com (about 2 minutes, no credit card), then paste it at first chat.\n"))
+		}
+		b.WriteString(m.styles.hint.Render("  [1/2/3/4] pick   [enter] confirm   [esc] back\n"))
 	case StepBroker:
 		if m.brokerSecretPhase {
 			b.WriteString(m.styles.prompt.Render("Now paste the API SECRET for " + string(m.brokerKind) + ":"))
