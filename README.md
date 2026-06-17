@@ -1,11 +1,6 @@
-```
-        /\        /\
-       /  \  /\  /  \
-      ( $  \/  \/  $ )      B U C K S
-       \    8-pt    /       the 8-point buck — a trader, not an assistant
-        \   buck   /
-         \________/
-```
+<p align="center">
+  <img src="assets/bucks-logo.png" alt="BUCKS — the 8-point buck" width="340">
+</p>
 
 # BUCKS
 

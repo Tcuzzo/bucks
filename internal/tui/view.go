@@ -2,16 +2,17 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // styleSet holds the precomputed lipgloss styles. lipgloss style application is a
 // pure string transform (it wraps text in ANSI codes); it performs no I/O, so
 // using it inside View never violates the never-stall invariant.
 type styleSet struct {
-	banner lipgloss.Style
 	header lipgloss.Style
 	prompt lipgloss.Style
 	hint   lipgloss.Style
@@ -23,7 +24,6 @@ type styleSet struct {
 
 func newStyles() styleSet {
 	return styleSet{
-		banner: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("178")), // gold $
 		header: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33")),  // blue
 		prompt: lipgloss.NewStyle().Foreground(lipgloss.Color("252")),            // bright
 		hint:   lipgloss.NewStyle().Faint(true),                                  // dim hint
@@ -34,23 +34,146 @@ func newStyles() styleSet {
 	}
 }
 
-// BuckBanner is the 8-point-buck-with-a-$ mascot (spec §1: 8-point-buck mascot, $
-// motif). It is plain ASCII so it renders on Linux AND Windows terminals alike.
-// The literal "$" and "BUCKS" appear so the brand mark is assertable in tests.
+// BuckBanner is the BUCKS block wordmark (spec §1: clean bold GOLD block wordmark,
+// no animal; $ money accent on the tagline). It is the PLAIN (uncolored) art so it
+// renders on Linux AND Windows terminals alike, and so README/non-TTY surfaces and
+// tests can match exact chars. Six block-letter lines spell BUCKS in box-drawing
+// blocks; the seventh is a tagline whose leading "$" is the money accent. The block
+// char "█" and the literal "$" appear so the brand mark is assertable in tests.
 const BuckBanner = `
-     \\   $   //
-      \\__|__//
-       (o   o)       B U C K S
-        \\ ^ /        the 8-point-buck trading agent
-        /| $ |\\       ___  $  ___
-       /_|___|_\\
-         //  \\\\
+ ██████╗ ██╗   ██╗ ██████╗██╗  ██╗███████╗
+ ██╔══██╗██║   ██║██╔════╝██║ ██╔╝██╔════╝
+ ██████╔╝██║   ██║██║     █████╔╝ ███████╗
+ ██╔══██╗██║   ██║██║     ██╔═██╗ ╚════██║
+ ██████╔╝╚██████╔╝╚██████╗██║  ██╗███████║
+ ╚═════╝  ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝
+   $  the 8-point buck — a trader, not an assistant
 `
 
-// bannerView renders the styled buck banner. Kept a method so the wizard header
-// and the welcome screen share one mascot.
+// bannerRenderer is a lipgloss renderer pinned to the 256-color profile. The wordmark
+// is the brand mark and must ALWAYS show in color — so we do not rely on stdout TTY
+// auto-detection (which strips color when stdout is a pipe/file, e.g. under tests or
+// `bucks logo | less`). Pinning ANSI256 here matches the 256-palette color codes
+// below and keeps the colored output deterministic everywhere, without mutating the
+// global default renderer the rest of the wizard uses for its own TTY-aware styles.
+var bannerRenderer = newBannerRenderer()
+
+func newBannerRenderer() *lipgloss.Renderer {
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.ANSI256)
+	return r
+}
+
+// banner colors — retro-arcade neon in the operator's palette: GREEN primary, GOLD
+// accent, BLACK background (the terminal's own black). The six block-letter wordmark
+// lines get a PER-LINE vertical GREEN gradient (bright neon/lawn green at the top
+// fading to gold on the bottom/shadow row — "green and gold"), mirroring HydraAgent's
+// vertical-gradient-on-a-figlet arcade look. The tagline is gold with a bright-green
+// "$" money accent. Precomputed once (pure string ops, no I/O).
+var (
+	// bannerGradient: top figlet line -> bottom figlet line. Six neon-green stops
+	// fading to a gold accent on the last (shadow) row. Each is its OWN bold style so
+	// a whole figlet line is colored in one Render (no nesting). Truecolor hex; the
+	// pinned ANSI256 renderer downsamples it deterministically (so it colors when piped).
+	bannerGradient = []lipgloss.Style{
+		bannerRenderer.NewStyle().Bold(true).Foreground(lipgloss.Color("#7CFC00")), // lawn green
+		bannerRenderer.NewStyle().Bold(true).Foreground(lipgloss.Color("#39FF14")), // neon green
+		bannerRenderer.NewStyle().Bold(true).Foreground(lipgloss.Color("#1AE676")),
+		bannerRenderer.NewStyle().Bold(true).Foreground(lipgloss.Color("#00E676")),
+		bannerRenderer.NewStyle().Bold(true).Foreground(lipgloss.Color("#00C853")), // deep green
+		bannerRenderer.NewStyle().Bold(true).Foreground(lipgloss.Color("#D4A24E")), // gold accent
+	}
+	// bannerWord is the canonical wordmark style (the first/top gradient stop). Tests
+	// derive the expected wordmark escape from it, so the assertion can't drift.
+	bannerWord = bannerGradient[0]
+	// bannerGold: tagline body in gold. bannerDollar: bright neon-green "$" accent.
+	bannerGold   = bannerRenderer.NewStyle().Foreground(lipgloss.Color("#D4A24E")) // gold (tagline body)
+	bannerDollar = bannerRenderer.NewStyle().Foreground(lipgloss.Color("#39FF14")) // neon green $
+)
+
+// RenderBanner returns the fully-colored BUCKS wordmark for a TTY in the retro-arcade
+// neon palette: the six block-letter figlet lines get a PER-LINE vertical GREEN
+// gradient (bright neon green at the top fading to a gold accent on the bottom row),
+// and the tagline is gold with its "$" money accent in bright green. Each figlet line
+// is colored as ONE styled unit in its gradient stop (one Render per line — like
+// HydraAgent appends each line with one color; no nested Render). The tagline is split
+// on "$" — the non-"$" segments gold and the "$" green, joined — so the green "$" is
+// never produced by nesting one Render inside another (which corrupts ANSI). It is a
+// pure string transform (no I/O), safe to call every frame.
+func RenderBanner() string {
+	lines := strings.Split(BuckBanner, "\n")
+	figletIdx := 0 // counts the figlet art rows, top -> bottom, for the gradient stop
+	for i, line := range lines {
+		// Each figlet ART row gets its own vertical gradient stop. "Art row" = a line of
+		// the block wordmark — block "█" rows AND the bottom box-drawing shadow row
+		// ("╚═════╝...") which carries no "█" but IS the last figlet row, so it takes the
+		// final (gold) stop. isFigletArt distinguishes those from the tagline + blanks.
+		// Clamp to the last stop so extra figlet rows (if the art grows) still color.
+		if isFigletArt(line) {
+			stop := figletIdx
+			if stop >= len(bannerGradient) {
+				stop = len(bannerGradient) - 1
+			}
+			lines[i] = bannerGradient[stop].Render(line)
+			figletIdx++
+			continue
+		}
+		lines[i] = colorDollarLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// isFigletArt reports whether a banner line is a row of the BUCKS block wordmark (so it
+// takes a green-gradient stop) as opposed to the tagline or a blank spacer. The figlet
+// art is built only from full-block and box-drawing glyphs; the tagline is plain text
+// with a "$". A line is art if it contains a block "█" OR is made of box-drawing pieces
+// (the bottom shadow row "╚═════╝") and carries no "$".
+func isFigletArt(line string) bool {
+	if strings.ContainsAny(line, "$") {
+		return false
+	}
+	if strings.Contains(line, "█") {
+		return true
+	}
+	// Bottom shadow row: only box-drawing glyphs + spaces, and at least one of them.
+	hasBox := false
+	for _, r := range line {
+		switch r {
+		case ' ', '╗', '╔', '╝', '╚', '═', '║', '╠', '╣', '╦', '╩', '╬':
+			if r != ' ' {
+				hasBox = true
+			}
+		default:
+			return false // any other glyph (plain text) => not pure art
+		}
+	}
+	return hasBox
+}
+
+// colorDollarLine renders one banner line: gold for the text, neon green for each
+// "$". It splits on "$" and renders the in-between gold segments and each "$" green
+// separately, then concatenates — no nested Render, so the ANSI stays clean.
+func colorDollarLine(line string) string {
+	if !strings.Contains(line, "$") {
+		return bannerGold.Render(line)
+	}
+	segs := strings.Split(line, "$")
+	var b strings.Builder
+	for i, seg := range segs {
+		if seg != "" {
+			b.WriteString(bannerGold.Render(seg))
+		}
+		if i < len(segs)-1 { // a "$" sat between this segment and the next
+			b.WriteString(bannerDollar.Render("$"))
+		}
+	}
+	return b.String()
+}
+
+// bannerView renders the COLORED BUCKS wordmark. Kept a method so the wizard header
+// and the welcome screen share one brand mark (now with proper per-line color).
 func (m WizardModel) bannerView() string {
-	return m.styles.banner.Render(BuckBanner)
+	return RenderBanner()
 }
 
 // View implements tea.Model. It is a pure function of the model state to a string
