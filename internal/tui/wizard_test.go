@@ -605,7 +605,10 @@ func clearInput(t *testing.T, m WizardModel, s string) WizardModel {
 	return m
 }
 
-// TestBrandingOnWelcome proves the 8-point-buck + $ mark is on the welcome view.
+// TestBrandingOnWelcome proves the BUCKS block wordmark + $ money accent are on the
+// welcome view. The welcome path renders the COLORED banner, so its output is ANSI;
+// we assert the brand on the plain BuckBanner constant (the source of truth) and on
+// the header text, and confirm the colored render carries ANSI escapes.
 func TestBrandingOnWelcome(t *testing.T) {
 	m := NewWizard()
 	v := m.View()
@@ -615,10 +618,82 @@ func TestBrandingOnWelcome(t *testing.T) {
 	if !strings.Contains(v, "$") {
 		t.Error("welcome view missing the $ motif")
 	}
+	// The block wordmark must show on the welcome screen — assert a block char survives.
+	if !strings.Contains(v, "█") {
+		t.Error("welcome view missing the block wordmark art")
+	}
+	// The colored banner is on the welcome screen: it must carry ANSI color escapes.
+	if !strings.Contains(v, "\x1b[") {
+		t.Error("welcome view missing ANSI color (banner should be rendered in color)")
+	}
+	// The plain banner constant is the README/non-TTY source of truth: assert exact art.
 	if !strings.Contains(BuckBanner, "$") {
 		t.Error("buck banner constant missing the $ mark")
 	}
-	if !strings.Contains(BuckBanner, "(o   o)") {
-		t.Error("buck banner missing the buck face")
+	if !strings.Contains(BuckBanner, "█") {
+		t.Error("buck banner missing the block wordmark art")
+	}
+	if !strings.Contains(BuckBanner, "the 8-point buck — a trader, not an assistant") {
+		t.Error("buck banner missing the tagline")
+	}
+}
+
+// TestRenderBannerIsColored proves RenderBanner returns the block wordmark WITH ANSI
+// color escapes (proving it is colored, not plain), that the retro-arcade neon GREEN
+// gradient is applied (top wordmark line green, AND a deeper gradient stop present so
+// it's a true vertical gradient, not flat), and that the block art + tagline survive.
+func TestRenderBannerIsColored(t *testing.T) {
+	r := RenderBanner()
+	if !strings.Contains(r, "\x1b[") {
+		t.Error("RenderBanner output has no ANSI escape — banner is not colored")
+	}
+	// The top wordmark line must be BOLD NEON GREEN: lipgloss opens it with the bold
+	// (1) + green fg escape. Derive that opening escape from the style itself (split a
+	// rendered probe on its payload) so the assertion can't drift from the color codes.
+	greenOpen := strings.SplitN(bannerGradient[0].Render("X"), "X", 2)[0]
+	if greenOpen == "" || !strings.Contains(r, greenOpen) {
+		t.Errorf("RenderBanner output missing the bold neon-green wordmark style (%q)", greenOpen)
+	}
+	// It must be a real vertical gradient, not one flat color: a DIFFERENT (lower)
+	// gradient stop must also appear. Pick a stop whose downsampled escape differs from
+	// the top one so this can't pass with a flat fill.
+	for _, idx := range []int{2, 4} {
+		open := strings.SplitN(bannerGradient[idx].Render("X"), "X", 2)[0]
+		if open != greenOpen && strings.Contains(r, open) {
+			goto gradientOK
+		}
+	}
+	t.Error("RenderBanner output shows no second gradient stop — banner is flat, not a vertical gradient")
+gradientOK:
+	// Each block-letter line is rendered as a single styled unit, so the block run
+	// survives intact between escapes.
+	if !strings.Contains(r, "██████") {
+		t.Error("RenderBanner output missing the block wordmark art")
+	}
+	// The tagline body sits on the "$" line, rendered as a gold segment, so it survives.
+	if !strings.Contains(r, "the 8-point buck — a trader, not an assistant") {
+		t.Error("RenderBanner output missing the tagline")
+	}
+}
+
+// TestRenderBannerDollarIsGreenNoNestedRender proves each "$" is colored on its own
+// (a green ANSI escape immediately precedes a "$"), and that splitting on "$" did not
+// nest one Render inside another — i.e. the "$" is emitted by the dedicated green
+// style, not wrapped by the gold style.
+func TestRenderBannerDollarIsGreenNoNestedRender(t *testing.T) {
+	r := RenderBanner()
+	// The "$" is the dedicated neon-green style. Derive its exact escape from the style
+	// (no hardcode) so the assertion can't drift from the downsampled color code.
+	greenDollar := bannerDollar.Render("$")
+	if !strings.Contains(r, greenDollar) {
+		t.Errorf("RenderBanner did not emit the green-styled $ (%q) — $ not colored green", greenDollar)
+	}
+	// No leftover plain "$" should remain outside a color escape: every "$" in the
+	// output must be the green-rendered one. Count raw "$" vs green-$ occurrences.
+	plainDollars := strings.Count(BuckBanner, "$")
+	greenDollars := strings.Count(r, greenDollar)
+	if greenDollars != plainDollars {
+		t.Errorf("expected %d green-rendered $ to match the %d $ in the plain banner; got %d",
+			plainDollars, plainDollars, greenDollars)
 	}
 }

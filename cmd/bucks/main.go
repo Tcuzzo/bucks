@@ -55,6 +55,13 @@ func run(args []string) error {
 		return runResearchStdio(strings.TrimSpace(strings.Join(args[1:], " ")))
 	}
 
+	// `bucks logo` (alias `bucks mascot`) — print the colored buck mascot to stdout and
+	// exit 0, so the owner can preview the terminal art without launching the wizard. A
+	// positional subcommand handled before flag parsing; it needs no config and no LLM.
+	if len(args) > 0 && (args[0] == "logo" || args[0] == "mascot") {
+		return runLogoStdio()
+	}
+
 	// `bucks read <url>` — the direct "read this page and tell me plain-English" path
 	// (keyless, no search). Reads the URL read-only and summarizes it, citing the URL.
 	if len(args) > 0 && args[0] == "read" {
