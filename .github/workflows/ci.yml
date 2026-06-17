@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build (static, no cgo)
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "gofmt needed on:"; echo "$unformatted"; exit 1; fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Vulnerability scan (govulncheck)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: License gate (no copyleft deps)
+        run: go test ./internal/license/ -run 'TestRealGoModHasNoCopyleft|TestEveryGoModRequireIsCurated' -count=1
+
+      - name: Tests
+        run: go test ./... -count=1
+
+      - name: Tests (race detector)
+        run: go test ./... -race -count=1
+
+      - name: Cross-compile (linux / windows / macOS)
+        run: |
+          for target in linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64; do
+            echo "==> $target"
+            GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 go build ./...
+          done

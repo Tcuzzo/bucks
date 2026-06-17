@@ -29,7 +29,10 @@ GO="${GO:-go}"
 
 # Fixed ldflags: strip debug info (-s -w) for a smaller, deterministic binary and stamp
 # the version. -trimpath removes local filesystem paths so the build is reproducible.
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.buildDate=${BUILD_DATE}"
+# The updater.Version stamp is what `bucks version` reports and what the self-updater
+# compares against the latest GitHub Release tag — so a shipped binary knows its own
+# version and can tell when a newer release is out.
+LDFLAGS="-s -w -X main.version=${VERSION} -X main.buildDate=${BUILD_DATE} -X 'bucks/internal/updater.Version=${VERSION}'"
 
 # Targets we ship. (os arch) pairs.
 TARGETS=(
