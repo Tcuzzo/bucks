@@ -1,0 +1,40 @@
+name: Release
+
+# Push a version tag (e.g. `git tag v1.2.0 && git push origin v1.2.0`) and this
+# workflow builds the cross-platform zips and publishes them as a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # required to create the release + upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vulnerability scan (govulncheck)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: Tests must pass before a release
+        run: go test ./... -count=1
+
+      - name: Build release zips (linux / windows / macOS) + checksums
+        run: VERSION="${GITHUB_REF_NAME}" bash dist/make_bucks_zip.sh   # stamps bucks version for the self-updater
+
+      - name: Publish GitHub Release with the binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/out/BUCKS_*.zip dist/out/SHA256SUMS \
+            --title "BUCKS ${GITHUB_REF_NAME}" \
+            --generate-notes

@@ -72,6 +72,22 @@ func run(args []string) error {
 		return runReadStdio(url)
 	}
 
+	// `bucks version` — print the build-stamped version + GOOS/GOARCH + go runtime
+	// version. A positional subcommand handled before flag parsing; needs no config
+	// and makes no network call.
+	if len(args) > 0 && args[0] == "version" {
+		return runVersionStdio()
+	}
+
+	// `bucks update` — the safe self-updater: check the latest GitHub Release, and on
+	// confirmation (or --yes) download + CHECKSUM-VERIFY + atomically replace this
+	// binary. `bucks update --check` only reports availability. A positional
+	// subcommand handled before flag parsing so its own flags don't collide with the
+	// top-level set.
+	if len(args) > 0 && args[0] == "update" {
+		return runUpdateStdio(args[1:])
+	}
+
 	fs := flag.NewFlagSet("bucks", flag.ContinueOnError)
 	daemon := fs.Bool("daemon", false, "run headless (no TUI) under a service manager")
 	paperSmoke := fs.Bool("paper-smoke", false, "boot the saved config into a paper trader and place one in-band paper trade (offline acceptance), then exit")
