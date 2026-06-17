@@ -56,6 +56,11 @@ setup walks you through everything on first run: connecting your broker, your Te
 bot, your AI backend, and writing your **playbook** (how much to risk, your style, your
 goals). It runs the **same way on Linux and Windows**.
 
+**Get it:** download the zip for your computer from the
+**[latest release](https://github.com/Tcuzzo/bucks/releases/latest)** (Windows, macOS, or
+Linux) — no Go or build tools needed. Or build from source: `git clone` this repo, then
+`go build -o bucks ./cmd/bucks`.
+
 ### Linux / macOS
 ```sh
 unzip BUCKS_linux_amd64.zip
