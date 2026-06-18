@@ -23,6 +23,7 @@ Talk:
 Manage:
   bucks version         print the version
   bucks update          update to the latest release (SHA-256 verified)
+  bucks doctor          health check: version, modules, vulnerabilities
   bucks logo            show the brand mark
 Flags: --config <path>, --chat, --paper-smoke (see ` + "`bucks <command> --help`" + `).
 `
