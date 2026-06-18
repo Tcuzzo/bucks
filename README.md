@@ -4,6 +4,8 @@
 
 # BUCKS
 
+**Version v1.2.1** · MIT · paper-trading by default · check yours with `bucks version`
+
 **BUCKS is a trading agent — a predator, not an assistant.** The name is a play on
 *buck* (the deer) and *bucks* (money): an **8-point buck** with a dollar-sign motif who
 works the markets for you inside the guardrails you set. It is not a chatbot you ask
