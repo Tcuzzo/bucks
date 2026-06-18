@@ -217,15 +217,24 @@ func SaveSetup(r tui.SetupResult, configPath, passphrase string, secretOpts ...s
 	if err != nil {
 		return fmt.Errorf("save setup: marshal playbook: %w", err)
 	}
-	if err := os.WriteFile(configPath, pbYAML, 0o600); err != nil {
-		return fmt.Errorf("save setup: write config: %w", err)
-	}
+	// Open the secrets store FIRST — before writing the plain config — so a missing
+	// passphrase (ErrPassphraseRequired on a keychain-less box) aborts the save BEFORE
+	// any file lands on disk. Otherwise an orphan plain config would make configExists
+	// report a completed setup that has no secrets, and the next launch would try the
+	// dashboard and fail to load. (errors.Is still sees ErrPassphraseRequired through %w.)
 	store, err := secrets.Open("", secretsPathFor(configPath), passphrase, secretOpts...)
 	if err != nil {
 		return fmt.Errorf("save setup: open secrets store: %w", err)
 	}
+	// Save the encrypted secrets FIRST, then write the plain config LAST. configExists()
+	// keys off the plain config as the "setup completed" signal, so writing it only after
+	// the secrets are durably stored means NO failure path (disk-full, EIO, cancel) can
+	// leave an orphan config that claims a completed setup the next launch can't load.
 	if err := store.Save(SecretConfigFrom(r)); err != nil {
 		return fmt.Errorf("save setup: encrypt secrets: %w", err)
+	}
+	if err := os.WriteFile(configPath, pbYAML, 0o600); err != nil {
+		return fmt.Errorf("save setup: write config: %w", err)
 	}
 	return nil
 }

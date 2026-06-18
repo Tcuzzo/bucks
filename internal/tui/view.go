@@ -181,9 +181,16 @@ func (m WizardModel) bannerView() string {
 func (m WizardModel) View() string {
 	var b strings.Builder
 
-	// Header carries the brand mark + a clear step locator on every screen.
-	b.WriteString(m.styles.header.Render(
-		fmt.Sprintf("$ BUCKS setup — step %d of %d: %s", m.stepNumber(), len(stepOrder)-1, m.step.String())))
+	// Header carries the brand mark + a clear locator on every screen. The six
+	// real setup steps show "step K of 6"; the terminal StepDone is a completion
+	// state, not a 7th step, so it shows a clean "complete" locator instead.
+	var header string
+	if m.step == StepDone {
+		header = "$ BUCKS setup — complete"
+	} else {
+		header = fmt.Sprintf("$ BUCKS setup — step %d of %d: %s", m.stepNumber(), len(stepOrder)-1, m.step.String())
+	}
+	b.WriteString(m.styles.header.Render(header))
 	b.WriteString("\n\n")
 
 	switch m.step {

@@ -18,9 +18,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"bucks/internal/channel"
+	"bucks/internal/orders"
+	"bucks/internal/secrets"
 	"bucks/internal/tui"
 )
 
@@ -174,25 +178,154 @@ func run(args []string) error {
 		return nil
 	}
 
+	// The single, real entry-point selection: a present config opens the live
+	// dashboard; an absent one runs the first-run wizard. Both are dispatched through
+	// injectable package vars (runWizardFn / runDashboardFn) so the dispatch LOGIC is
+	// testable without launching a real TUI — a test swaps them for spies and asserts
+	// which path was taken (see TestRunDispatches*). Production keeps the real TTY funcs.
 	if !configExists(*configPath) {
-		return runWizard()
+		return runWizardFn(*configPath)
 	}
-	return runDashboard()
+	return runDashboardFn(*configPath)
 }
 
-// runWizard boots the guided-unpack wizard against the real terminal.
-func runWizard() error {
+// runWizardFn and runDashboardFn are the two boot paths, indirected behind package
+// vars so the dispatch in run() is unit-testable (a test swaps in spies). In
+// production they are the real terminal funcs below; nothing else reassigns them.
+var (
+	runWizardFn    = runWizard
+	runDashboardFn = runDashboard
+)
+
+// runWizard boots the guided-unpack wizard against the real terminal, and — THIS is
+// the fix for the "wizard restarts every launch" blocker — PERSISTS the completed
+// result so the config file exists afterward and the next launch opens the dashboard.
+// If the owner quits before finishing (no StepDone), nothing is saved and we say so,
+// so an aborted setup is never mistaken for a completed one.
+func runWizard(configPath string) error {
 	p := tea.NewProgram(tui.NewWizard())
-	_, err := p.Run()
+	final, err := p.Run()
+	if err != nil {
+		return err
+	}
+	model, ok := final.(tui.WizardModel)
+	if !ok || !model.Done() {
+		// The owner quit before completing setup. Do NOT save a partial result —
+		// the wizard will run again next time, which is the correct behavior here.
+		fmt.Println("bucks: setup not completed — nothing saved. Run `bucks` to start the wizard again.")
+		return nil
+	}
+	// persistSetupInteractive handles the keychain-less box: if saving needs a passphrase
+	// (no system keychain, no BUCKS_PASSPHRASE) it securely PROMPTS for one and retries,
+	// so first-run setup completes instead of failing with a cryptic error and re-running
+	// the wizard every launch. On a desktop with a keychain it saves with no prompt.
+	if err := persistSetupInteractive(model.Result(), configPath, passphraseFromEnv()); err != nil {
+		return fmt.Errorf("save setup: %w", err)
+	}
+	fmt.Println("bucks: setup saved. Run `bucks` to open your dashboard.")
+	return nil
+}
+
+// runDashboard boots the live dashboard against the real terminal, OPENED on the
+// owner's saved setup (mode, account equity from the playbook, flat positions). It
+// LoadSetup's the persisted config and seeds the model with an initial snapshot so the
+// dashboard shows real loaded state, not an empty stub. A load error (e.g. wrong
+// passphrase / missing secrets) is reported in plain English — it does NOT crash and
+// does NOT silently fall back to re-running the wizard (that would hide the real
+// problem). The live trade-loop feed lands in a later slice; this is the open-on-load.
+func runDashboard(configPath string) error {
+	// buildDashboardInteractive handles the keychain-less box: with no BUCKS_PASSPHRASE
+	// and a human attached, it prompts ONCE to unlock; under a daemon / piped input it
+	// does NOT prompt and returns the clear passphrase error handled below.
+	model, _, err := buildDashboardInteractive(configPath, passphraseFromEnv())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bucks: couldn't open your saved setup: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Your config is at:", configPath)
+		fmt.Fprintln(os.Stderr, "If you set a passphrase, make sure BUCKS_PASSPHRASE matches it, then run `bucks` again.")
+		return err
+	}
+	p := tea.NewProgram(model)
+	_, err = p.Run()
 	return err
 }
 
-// runDashboard boots the live dashboard against the real terminal. The harness
-// (wired in a later slice) feeds it tui.SnapshotMsg values via p.Send.
-func runDashboard() error {
-	p := tea.NewProgram(tui.NewDashboard())
-	_, err := p.Run()
-	return err
+// passphraseFromEnv reads the file-backend passphrase from BUCKS_PASSPHRASE. On a
+// desktop the OS keychain backend is used and this passphrase is unused (it may be
+// empty); on a headless box without a keychain it unlocks the encrypted secrets file.
+func passphraseFromEnv() string { return os.Getenv("BUCKS_PASSPHRASE") }
+
+// persistSetup saves a COMPLETED wizard SetupResult so the config file exists on disk
+// afterward (configExists -> true) — the durable fix for the wizard re-running every
+// launch. It is the thin, testable seam over boot.SaveSetup (playbook plain + secrets
+// encrypted). secretOpts is empty in production (keychain preferred) and
+// secrets.ForceFileBackend() in tests so the round trip is hermetic.
+func persistSetup(r tui.SetupResult, configPath, passphrase string, secretOpts ...secrets.Option) error {
+	return SaveSetup(r, configPath, passphrase, secretOpts...)
+}
+
+// buildDashboardFromConfig LoadSetup's the persisted config and builds the initial
+// dashboard model + snapshot reflecting the SAVED state: paper/live mode, the chosen
+// LLM backend, and the account equity from the playbook capital, with no positions yet
+// (the honest flat first-open). All the load LOGIC lives here (testable); the caller's
+// only untestable part is the tea.NewProgram(...).Run() I/O shell.
+func buildDashboardFromConfig(configPath, passphrase string, secretOpts ...secrets.Option) (tui.DashboardModel, tui.Snapshot, error) {
+	r, err := LoadSetup(configPath, passphrase, secretOpts...)
+	if err != nil {
+		return tui.DashboardModel{}, tui.Snapshot{}, err
+	}
+	snap := initialSnapshot(r)
+	model := tui.NewDashboard()
+	updated, _ := model.Update(tui.SnapshotMsg{Snapshot: snap})
+	return updated.(tui.DashboardModel), snap, nil
+}
+
+// buildDashboardInteractive opens the saved dashboard, handling the keychain-less box on
+// the LOAD side symmetrically to the save side: it first tries buildDashboardFromConfig
+// with the env passphrase (empty when BUCKS_PASSPHRASE is unset). If that fails ONLY
+// because a passphrase is required (errors.Is secrets.ErrPassphraseRequired) — the
+// no-keychain case — AND a human is attached (stdin is a terminal), it PROMPTS ONCE (no
+// confirm) to unlock and retries. Under a service manager / piped input (not a terminal)
+// it does NOT prompt: it returns the ErrPassphraseRequired so runDashboard prints the
+// clear "set BUCKS_PASSPHRASE" message instead of hanging on a TTY that isn't there. Any
+// other load error (wrong passphrase, corrupt file, missing config) is returned as-is.
+func buildDashboardInteractive(configPath, envPass string, secretOpts ...secrets.Option) (tui.DashboardModel, tui.Snapshot, error) {
+	model, snap, err := buildDashboardFromConfig(configPath, envPass, secretOpts...)
+	if err == nil {
+		return model, snap, nil
+	}
+	// Only the "needs a passphrase, none given, and a human is here" case prompts.
+	if !errors.Is(err, secrets.ErrPassphraseRequired) || envPass != "" || !stdinIsTerminal() {
+		return tui.DashboardModel{}, tui.Snapshot{}, err
+	}
+	fmt.Fprintln(os.Stderr, "This machine has no system keychain — unlock your saved keys with your passphrase.")
+	pass, perr := promptUnlockPassphrase()
+	if perr != nil {
+		return tui.DashboardModel{}, tui.Snapshot{}, perr
+	}
+	return buildDashboardFromConfig(configPath, pass, secretOpts...)
+}
+
+// initialSnapshot builds the first dashboard snapshot from a loaded SetupResult: the
+// account equity is the owner's playbook capital, the trader is flat (no positions, no
+// realized/unrealized P&L), and the mode reflects the saved paper/live choice. It is a
+// pure value build (no clock read, no I/O) so it is fully testable; the live trade loop
+// replaces it with real reports once that feed is wired (a later slice).
+func initialSnapshot(r tui.SetupResult) tui.Snapshot {
+	backend := string(r.LLM)
+	return tui.Snapshot{
+		Now: time.Time{}, // no wall-clock read; the live loop supplies real times later
+		Report: channel.Report{
+			Equity:       r.Playbook.Capital,
+			RealizedPL:   orders.ZeroDecimal,
+			UnrealizedPL: orders.ZeroDecimal,
+			Positions:    nil, // flat on first open — honest, not a stub
+		},
+		Health: tui.Health{
+			Halted:  false,
+			Backend: backend,
+			Live:    r.Live, // paper by default; load never carries live in this slice
+		},
+	}
 }
 
 // configExists reports whether a readable config file is present at path.

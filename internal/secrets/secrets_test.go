@@ -310,6 +310,35 @@ func TestOpenErrorsWhenNoKeychainAndNoPassphrase(t *testing.T) {
 	}
 }
 
+// TestErrPassphraseRequiredIsSentinelOnBothPaths proves the no-passphrase failure on
+// a keychain-less box is an errors.Is-able sentinel (ErrPassphraseRequired) on BOTH
+// code paths a caller can hit:
+//
+//   - NewFileStore("", "") — the FileStore opened with an empty passphrase (the forced
+//     file backend / direct construction); and
+//   - Open(..., "") with the keychain forced UNAVAILABLE and no passphrase — the
+//     automatic-fallback path on a headless Linux box with no Secret Service.
+//
+// Without a typed sentinel, cmd/bucks could only string-match the message to decide
+// "prompt for a passphrase"; the sentinel lets it branch with errors.Is instead.
+func TestErrPassphraseRequiredIsSentinelOnBothPaths(t *testing.T) {
+	// Path 1: the FileStore (forced file backend) with an empty passphrase.
+	if _, err := NewFileStore("some.age", ""); !errors.Is(err, ErrPassphraseRequired) {
+		t.Errorf("NewFileStore empty-passphrase err = %v, want errors.Is ErrPassphraseRequired", err)
+	}
+	// And via the ForceFileBackend Open seam (the path cmd/bucks tests actually drive).
+	if _, err := Open("", filepath.Join(t.TempDir(), "x.age"), "", ForceFileBackend()); !errors.Is(err, ErrPassphraseRequired) {
+		t.Errorf("Open(ForceFileBackend, empty passphrase) err = %v, want errors.Is ErrPassphraseRequired", err)
+	}
+
+	// Path 2: Open with the keychain forced UNAVAILABLE (in-process, never the real OS
+	// keychain) and no passphrase — the headless-Linux automatic-fallback failure.
+	keyring.MockInitWithError(keyring.ErrUnsupportedPlatform)
+	if _, err := Open("", filepath.Join(t.TempDir(), "y.age"), ""); !errors.Is(err, ErrPassphraseRequired) {
+		t.Errorf("Open(no keychain, no passphrase) err = %v, want errors.Is ErrPassphraseRequired", err)
+	}
+}
+
 func firstN(b []byte, n int) []byte {
 	if len(b) < n {
 		return b

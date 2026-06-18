@@ -1,9 +1,9 @@
-# install.ps1 — BUCKS remote installer / updater (Windows, PowerShell).
+# install.ps1 - BUCKS remote installer / updater (Windows, PowerShell).
 #
-# One command installs BUCKS if it's absent and updates it if it's present —
+# One command installs BUCKS if it's absent and updates it if it's present -
 # no manual download, no unzip, no reinstall churn. It pulls the latest release
 # from GitHub, VERIFIES the download against the published SHA256SUMS (it ABORTS
-# on any mismatch — an unverified binary is never installed), and drops
+# on any mismatch - an unverified binary is never installed), and drops
 # bucks.exe into a user-local apps folder. It never needs Administrator.
 #
 #   irm https://raw.githubusercontent.com/Tcuzzo/bucks/main/install.ps1 | iex
@@ -51,7 +51,7 @@ try {
     try {
         Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sumPath -UseBasicParsing
     } catch {
-        throw 'BUCKS: failed to download SHA256SUMS — cannot verify the binary, aborting.'
+        throw 'BUCKS: failed to download SHA256SUMS - cannot verify the binary, aborting.'
     }
 
     # ---- VERIFY (security core) ---------------------------------------------
@@ -64,12 +64,12 @@ try {
         }
     }
     if (-not $expected) {
-        throw "BUCKS: no checksum entry for $asset in SHA256SUMS — refusing to install."
+        throw "BUCKS: no checksum entry for $asset in SHA256SUMS - refusing to install."
     }
 
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLower()
     if ($actual -ne $expected) {
-        Write-Host "BUCKS: CHECKSUM MISMATCH for $asset — refusing to install." -ForegroundColor Red
+        Write-Host "BUCKS: CHECKSUM MISMATCH for $asset - refusing to install." -ForegroundColor Red
         Write-Host "  expected: $expected"
         Write-Host "  actual:   $actual"
         throw 'The download is corrupt or has been tampered with. Nothing was installed.'

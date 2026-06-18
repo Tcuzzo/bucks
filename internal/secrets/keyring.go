@@ -139,7 +139,9 @@ func Open(user, filePath, passphrase string, opts ...Option) (Store, error) {
 		return ks, nil
 	}
 	if passphrase == "" {
-		return nil, errors.New("secrets: OS keychain unavailable and no passphrase given for the encrypted-file fallback — supply a passphrase")
+		// Wrap the sentinel so cmd/bucks can errors.Is this exact "no keychain, no
+		// passphrase" case and prompt for one, while the message stays descriptive.
+		return nil, fmt.Errorf("OS keychain unavailable and no passphrase given for the encrypted-file fallback: %w", ErrPassphraseRequired)
 	}
 	return NewFileStore(filePath, passphrase)
 }

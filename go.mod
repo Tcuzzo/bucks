@@ -10,6 +10,7 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/pb33f/libopenapi v0.38.1
 	github.com/zalando/go-keyring v0.2.8
+	golang.org/x/term v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
 )
@@ -48,7 +49,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.5 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
