@@ -1,4 +1,4 @@
-# install.ps1 — BUCKS guided first-run unpack (Windows).
+# install.ps1 - BUCKS guided first-run unpack (Windows).
 # This ships INSIDE each Windows release zip next to bucks.exe. It is the friendly
 # entry point on Windows: it optionally copies bucks.exe into a user-local apps folder
 # on your PATH and launches the guided setup wizard. It touches nothing system-wide and

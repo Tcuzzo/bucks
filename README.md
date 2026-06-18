@@ -4,7 +4,7 @@
 
 # BUCKS
 
-**Version v1.2.1** · MIT · paper-trading by default · check yours with `bucks version`
+**Version v1.2.2** · MIT · paper-trading by default · check yours with `bucks version`
 
 **BUCKS is a trading agent — a predator, not an assistant.** The name is a play on
 *buck* (the deer) and *bucks* (money): an **8-point buck** with a dollar-sign motif who
@@ -90,15 +90,23 @@ Linux) — no Go or build tools needed. Or build from source: `git clone` this r
 ```sh
 unzip BUCKS_linux_amd64.zip
 cd BUCKS_linux_amd64
-./install.sh          # guided unpack — walks you through first-run setup
+./install.sh          # guided unpack - walks you through first-run setup
 ```
 
 #### Windows
 ```powershell
+# Windows blocks downloaded scripts by default. Allow it for THIS session only:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 Expand-Archive BUCKS_windows_amd64.zip
 cd BUCKS_windows_amd64
-.\install.ps1          # guided unpack — walks you through first-run setup
+.\install.ps1          # guided unpack - walks you through first-run setup
 ```
+
+> **Windows PowerShell 5.1 note.** Run each line on its own. Older PowerShell does
+> **not** support `&&` to chain commands (`git clone ... && cd ...`) the way Linux/macOS
+> shells do — paste the lines one at a time, or use `;` between them. The one-command
+> `irm ... | iex` installer above sidesteps both the execution-policy prompt and `&&`
+> entirely, so it's the easiest path on Windows.
 
 On first run you'll see the wizard. Answer the questions, and BUCKS connects to your
 broker's **paper** account and reaches **"trading (paper)"** — placing and managing

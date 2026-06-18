@@ -72,6 +72,7 @@ var KnownLicenses = map[string]string{
 	"github.com/kr/text":               "MIT",
 	"golang.org/x/sync":                "BSD-3-Clause",
 	"golang.org/x/sys":                 "BSD-3-Clause",
+	"golang.org/x/term":                "BSD-3-Clause", // no-echo passphrase prompt (keychain-less first run)
 	"golang.org/x/text":                "BSD-3-Clause",
 	"modernc.org/libc":                 "BSD-3-Clause",
 	"modernc.org/mathutil":             "BSD-3-Clause",

@@ -39,6 +39,15 @@ import (
 // ErrNotFound is returned by Load when no config has been saved yet (first run).
 var ErrNotFound = errors.New("secrets: no saved config found")
 
+// ErrPassphraseRequired is the typed, errors.Is-able sentinel returned whenever a
+// passphrase is needed to protect the keys at rest but none was supplied. It surfaces
+// from BOTH no-passphrase failure paths: opening the encrypted-FILE backend with an
+// empty passphrase, and Open falling back to that file backend on a box with no usable
+// OS keychain and no passphrase given. cmd/bucks branches on this sentinel (errors.Is)
+// to securely PROMPT the owner for a passphrase instead of dying with a cryptic error —
+// the keychain-less first-run fix.
+var ErrPassphraseRequired = errors.New("secrets: a passphrase is required to encrypt your keys on this machine (no system keychain available)")
+
 // BrokerCred is one broker connection's credentials as persisted (kind + key/secret).
 // Kind mirrors the wizard's broker selection (e.g. "alpaca-paper"); Key/Secret are the
 // real venue credentials.
@@ -112,7 +121,9 @@ func NewFileStore(path, passphrase string) (*FileStore, error) {
 		return nil, errors.New("secrets: file store path is empty")
 	}
 	if passphrase == "" {
-		return nil, errors.New("secrets: passphrase is required for the encrypted-file backend")
+		// Wrap the sentinel so callers can branch with errors.Is while the message stays
+		// human-readable (and pins which backend asked for it).
+		return nil, fmt.Errorf("encrypted-file backend: %w", ErrPassphraseRequired)
 	}
 	return &FileStore{Path: path, passphrase: passphrase, workFactor: scryptWorkFactor}, nil
 }
