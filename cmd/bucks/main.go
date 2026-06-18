@@ -54,6 +54,7 @@ var knownSubcommands = map[string]bool{
 	"mascot":   true,
 	"version":  true,
 	"update":   true,
+	"doctor":   true,
 	"help":     true,
 }
 
@@ -131,6 +132,14 @@ func run(args []string) error {
 	// top-level set.
 	if len(args) > 0 && args[0] == "update" {
 		return runUpdateStdio(args[1:])
+	}
+
+	// `bucks doctor` — health check: binary version vs latest release, Go toolchain,
+	// outdated modules, and govulncheck. Use --fix to apply remediations; --check to
+	// preview without scanning. A positional subcommand handled before flag parsing so
+	// its own flags don't collide with the top-level set.
+	if len(args) > 0 && args[0] == "doctor" {
+		return runDoctor(args[1:])
 	}
 
 	fs := flag.NewFlagSet("bucks", flag.ContinueOnError)
