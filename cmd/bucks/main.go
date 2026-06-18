@@ -12,6 +12,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -23,16 +24,60 @@ import (
 	"bucks/internal/tui"
 )
 
+// errUnknownCommand is returned by run() when the first positional arg is not a
+// known subcommand. run() has already printed "unknown command: …" + the full help
+// to stderr, so main() exits non-zero WITHOUT printing a second, redundant line.
+var errUnknownCommand = errors.New("unknown command")
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		if errors.Is(err, errUnknownCommand) {
+			// run() already printed the message + help to stderr; just exit non-zero.
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, "bucks:", err)
 		os.Exit(1)
 	}
 }
 
+// knownSubcommands is the exact set of positional subcommands run() dispatches
+// BEFORE flag parsing. It is the single source of truth used to (a) recognize a
+// valid command and (b) reject an unknown one with a helpful message. `mascot` is
+// the alias of `logo`. Keep this in lockstep with the dispatch checks below and the
+// help text in runHelp.
+var knownSubcommands = map[string]bool{
+	"chat":     true,
+	"summary":  true,
+	"research": true,
+	"read":     true,
+	"logo":     true,
+	"mascot":   true,
+	"version":  true,
+	"update":   true,
+	"help":     true,
+}
+
 // run parses flags and dispatches. It is split out from main so the dispatch is
 // testable without exiting the process.
 func run(args []string) error {
+	// Top-level help discovery, handled BEFORE flag parsing so the SUBCOMMAND list
+	// (not just the flag usage) is what `bucks help`, `bucks -h`, and `bucks --help`
+	// print. The positional subcommands below are dispatched before flag.Parse ever
+	// runs, so without this check a user could never discover them.
+	if len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
+		return runHelp(os.Stdout)
+	}
+
+	// An UNKNOWN positional command (a first arg that is not a flag and not one of the
+	// known subcommands) prints a clear error + the help and exits non-zero, instead of
+	// silently falling through to the wizard/dashboard. Flags (leading `-`) are left to
+	// the flag set below so `--help`-style flags and `-daemon` keep working.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !knownSubcommands[args[0]] {
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
+		_ = runHelp(os.Stderr)
+		return errUnknownCommand
+	}
+
 	// `bucks chat` — the conversational REPL (you talk to BUCKS like a person). It is
 	// a positional subcommand handled BEFORE flag parsing so a bare `bucks chat` works;
 	// the `--chat` flag below is the equivalent flag form. The backend is configured by
@@ -89,6 +134,9 @@ func run(args []string) error {
 	}
 
 	fs := flag.NewFlagSet("bucks", flag.ContinueOnError)
+	// Usage prints the FULL command list (not just the flag dump), so any path that
+	// triggers flag usage still shows how to discover the subcommands.
+	fs.Usage = func() { _ = runHelp(os.Stderr) }
 	daemon := fs.Bool("daemon", false, "run headless (no TUI) under a service manager")
 	paperSmoke := fs.Bool("paper-smoke", false, "boot the saved config into a paper trader and place one in-band paper trade (offline acceptance), then exit")
 	chatFlag := fs.Bool("chat", false, "open the conversational REPL — talk to BUCKS like a person (backend via BUCKS_CHAT_BASEURL/_KEY/_MODEL)")
