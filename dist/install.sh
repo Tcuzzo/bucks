@@ -16,12 +16,7 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 cat <<'BANNER'
-        /\        /\
-       /  \  /\  /  \
-      ( $  \/  \/  $ )      B U C K S
-       \    8-pt    /       the 8-point buck — a trader, not an assistant
-        \   buck   /
-         \________/
+BUCKS — a trading agent, a predator not an assistant.
 
 Welcome. BUCKS starts in PAPER mode (simulated money) — going live is a deliberate
 choice you make later. Let's get you set up.

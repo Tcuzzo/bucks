@@ -56,19 +56,42 @@ setup walks you through everything on first run: connecting your broker, your Te
 bot, your AI backend, and writing your **playbook** (how much to risk, your style, your
 goals). It runs the **same way on Linux and Windows**.
 
-**Get it:** download the zip for your computer from the
+### Install (one command)
+
+The fastest way in — installs BUCKS if it's missing, **updates** it if it's already
+there, and verifies the download against the published checksums before touching your
+machine. No download-and-unzip, no admin, no reinstall churn.
+
+**macOS / Linux**
+```sh
+curl -fsSL https://raw.githubusercontent.com/Tcuzzo/bucks/main/install.sh | bash
+```
+
+**Windows (PowerShell)**
+```powershell
+irm https://raw.githubusercontent.com/Tcuzzo/bucks/main/install.ps1 | iex
+```
+
+The binary lands in a user-local folder (`~/.local/bin` on macOS/Linux,
+`%LOCALAPPDATA%\BUCKS` on Windows). To **update later**, just re-run the same command —
+or run `bucks update`. Then start it with `bucks` (the installer prints how, and the
+exact `PATH` line to add if needed). It runs the **same way on Linux and Windows**.
+
+### Download a zip instead (manual)
+
+Prefer to grab it by hand? Download the zip for your computer from the
 **[latest release](https://github.com/Tcuzzo/bucks/releases/latest)** (Windows, macOS, or
 Linux) — no Go or build tools needed. Or build from source: `git clone` this repo, then
 `go build -o bucks ./cmd/bucks`.
 
-### Linux / macOS
+#### Linux / macOS
 ```sh
 unzip BUCKS_linux_amd64.zip
 cd BUCKS_linux_amd64
 ./install.sh          # guided unpack — walks you through first-run setup
 ```
 
-### Windows
+#### Windows
 ```powershell
 Expand-Archive BUCKS_windows_amd64.zip
 cd BUCKS_windows_amd64
