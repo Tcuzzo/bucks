@@ -46,11 +46,19 @@ func SecretConfigFrom(r tui.SetupResult) secrets.Config {
 			Secret: b.Secret,
 		})
 	}
-	return secrets.Config{
+	cfg := secrets.Config{
 		TelegramToken: r.TelegramToken,
 		LLMChoice:     string(r.LLM),
 		Brokers:       brokers,
 	}
+	// The LLM API key is sensitive (it authenticates chat/analyst calls), so it crosses
+	// here into the ENCRYPTED secrets — never the plain config. Persisted only when the
+	// owner actually has a key (the OAuth path carries none). LLMKeys[0] is the single
+	// chat/analyst key; the slice keeps room for a future primary+fallback pair.
+	if r.LLMKey != "" {
+		cfg.LLMKeys = []string{r.LLMKey}
+	}
+	return cfg
 }
 
 // bootPaperTrader wires a loaded SetupResult into a running (paper) Trader and proves
@@ -275,9 +283,14 @@ func LoadSetup(configPath, passphrase string, secretOpts ...secrets.Option) (tui
 			Secret: b.Secret,
 		})
 	}
+	llmKey := ""
+	if len(sc.LLMKeys) > 0 {
+		llmKey = sc.LLMKeys[0]
+	}
 	return tui.SetupResult{
 		TelegramToken: sc.TelegramToken,
 		LLM:           tui.LLMChoice(sc.LLMChoice),
+		LLMKey:        llmKey,
 		Brokers:       brokerCreds,
 		Playbook:      pb,
 		Live:          false, // paper default; live is a deliberate runtime flip

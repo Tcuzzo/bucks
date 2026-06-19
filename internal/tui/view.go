@@ -206,18 +206,27 @@ func (m WizardModel) View() string {
 		b.WriteString("\n  > " + mask(m.input) + "\n")
 		b.WriteString(m.styles.hint.Render("  [enter] save   [esc] back\n"))
 	case StepLLM:
-		b.WriteString(m.styles.prompt.Render("Which thinking backend should BUCKS use?"))
-		b.WriteString("\n")
-		b.WriteString(choiceLine("1", "OAuth-GPT", m.llm == LLMOAuthGPT))
-		b.WriteString(choiceLine("2", "Cloud API key", m.llm == LLMCloudKey))
-		b.WriteString(choiceLine("3", "Both (primary + fallback)", m.llm == LLMBoth))
-		b.WriteString(choiceLine("4", "Free (NVIDIA Nemotron)", m.llm == LLMNemotronFree))
-		if m.llm == LLMNemotronFree {
-			b.WriteString(m.styles.hint.Render(
-				"  Free brain — no paid key, no Ollama needed. Get a free nvapi-... key at\n" +
-					"  build.nvidia.com (about 2 minutes, no credit card), then paste it at first chat.\n"))
+		if m.llmKeyPhase {
+			// Second StepLLM prompt: capture the API key for the key-based backend. It is
+			// masked (mask) so the key is never shoulder-surfed off the screen.
+			b.WriteString(m.styles.prompt.Render(m.llm.keyPrompt()))
+			b.WriteString("\n")
+			b.WriteString("  key > " + mask(m.input) + "\n")
+			b.WriteString(m.styles.hint.Render("  type key   [enter] save   [esc] pick a different backend\n"))
+		} else {
+			b.WriteString(m.styles.prompt.Render("Which thinking backend should BUCKS use?"))
+			b.WriteString("\n")
+			b.WriteString(choiceLine("1", "OAuth-GPT", m.llm == LLMOAuthGPT))
+			b.WriteString(choiceLine("2", "Cloud API key", m.llm == LLMCloudKey))
+			b.WriteString(choiceLine("3", "Both (primary + fallback)", m.llm == LLMBoth))
+			b.WriteString(choiceLine("4", "Free (NVIDIA Nemotron)", m.llm == LLMNemotronFree))
+			if m.llm == LLMNemotronFree {
+				b.WriteString(m.styles.hint.Render(
+					"  Free brain — no paid key, no Ollama needed. Get a free nvapi-... key at\n" +
+						"  build.nvidia.com (about 2 minutes, no credit card), then paste it next.\n"))
+			}
+			b.WriteString(m.styles.hint.Render("  [1/2/3/4] pick   [enter] confirm   [esc] back\n"))
 		}
-		b.WriteString(m.styles.hint.Render("  [1/2/3/4] pick   [enter] confirm   [esc] back\n"))
 	case StepBroker:
 		if m.brokerSecretPhase {
 			b.WriteString(m.styles.prompt.Render("Now paste the API SECRET for " + string(m.brokerKind) + ":"))

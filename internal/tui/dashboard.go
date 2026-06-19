@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,41 @@ import (
 	"bucks/internal/channel"
 	"bucks/internal/orders"
 )
+
+// ChatResponder is the dashboard's tiny chat seam: one method that takes the owner's
+// text and returns BUCKS's reply text (or an error). The TUI talks to THIS, never to
+// the chat package directly, so the dashboard stays unit-testable with a fake and
+// carries no LLM/HTTP handle of its own (the never-stall invariant: the call is run
+// inside a tea.Cmd, off the Update loop). A nil ChatResponder means chat is disabled
+// (the read-only dashboard, exactly as before).
+type ChatResponder interface {
+	// Say answers one turn. It may block on a network call — which is WHY the
+	// dashboard only ever invokes it inside a tea.Cmd, never inline in Update/View.
+	Say(ctx context.Context, text string) (string, error)
+}
+
+// who labels a chat transcript line's speaker.
+type who int
+
+const (
+	whoYou   who = iota // the owner typed it
+	whoBucks            // BUCKS replied
+	whoSys              // a system hint/error line (not from the model)
+)
+
+// chatLine is one rendered line of the in-dashboard conversation.
+type chatLine struct {
+	who  who
+	text string
+}
+
+// chatReplyMsg is the tea.Msg a chat Say command returns when the reply (or error)
+// arrives. It is delivered to Update off the loop, so the slow LLM call never blocks
+// a frame. Exactly one of text/err is meaningful (err non-nil => the call failed).
+type chatReplyMsg struct {
+	text string
+	err  error
+}
 
 // Health is the trader's live health surface. It is carried INTO the dashboard by
 // the owner of the trade loop (the harness) — the dashboard never computes it, so
@@ -64,12 +100,38 @@ type DashboardModel struct {
 	snap     Snapshot
 	haveSnap bool
 	styles   styleSet
+
+	// --- chat surface (nil chat => read-only dashboard, exactly as before) ---
+	chat       ChatResponder // nil disables chat (the read-only path)
+	transcript []chatLine    // the rendered conversation, oldest first
+	input      string        // the line the owner is currently typing
+	thinking   bool          // true while awaiting a reply (the Say cmd is in flight)
 }
 
-// NewDashboard constructs an empty dashboard (no snapshot yet).
+// NewDashboard constructs an empty, READ-ONLY dashboard (no snapshot, no chat). This
+// is the unchanged constructor existing callers/tests use — chat is nil, so the key
+// map and view are exactly as before (q quits; no input line).
 func NewDashboard() DashboardModel {
 	return DashboardModel{styles: newStyles()}
 }
+
+// NewDashboardWithChat constructs a dashboard with the chat surface ENABLED, wired to
+// resp (the owner can type and talk to BUCKS). A nil resp is allowed and degrades to
+// the read-only dashboard. This is what launch uses so `bucks` opens chat-ready.
+func NewDashboardWithChat(resp ChatResponder) DashboardModel {
+	return DashboardModel{styles: newStyles(), chat: resp}
+}
+
+// SetChat returns a copy of the model with the chat responder set, so a caller that
+// already built a dashboard can enable chat without reconstructing it. Returning a
+// value keeps DashboardModel a value type (tea.Model).
+func (m DashboardModel) SetChat(resp ChatResponder) DashboardModel {
+	m.chat = resp
+	return m
+}
+
+// chatEnabled reports whether the chat surface is active (a responder is wired).
+func (m DashboardModel) chatEnabled() bool { return m.chat != nil }
 
 // Init implements tea.Model. The dashboard performs no startup I/O of its own; the
 // harness pushes snapshots in as messages. Returns nil — never-stall from frame 0.
@@ -85,7 +147,21 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.snap = msg.Snapshot
 		m.haveSnap = true
 		return m, nil
+	case chatReplyMsg:
+		// The async Say finished. Clear the thinking flag and append BUCKS's reply (or
+		// an error line — never a crash, never a fabricated answer).
+		m.thinking = false
+		if msg.err != nil {
+			m.transcript = append(m.transcript, chatLine{who: whoSys, text: "error: " + msg.err.Error()})
+		} else {
+			m.transcript = append(m.transcript, chatLine{who: whoBucks, text: msg.text})
+		}
+		return m, nil
 	case tea.KeyMsg:
+		if m.chatEnabled() {
+			return m.updateChatKey(msg)
+		}
+		// Read-only dashboard (no chat): the historical key map — q or ctrl+c quits.
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
@@ -96,6 +172,67 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// updateChatKey is the chat-mode key map. Because the owner is TYPING, ordinary runes
+// (including 'q') go into the input buffer — quitting is ctrl+c (always) or esc when
+// the input is empty. Enter sends the line. Every path returns promptly; the only
+// slow work (the model call) is deferred into a tea.Cmd, never run inline here.
+func (m DashboardModel) updateChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return m, tea.Quit
+	case tea.KeyEsc:
+		// Esc quits only on an empty input (a clean exit); with text typed it clears the
+		// line instead of quitting, so esc mid-message never drops the owner out.
+		if m.input == "" {
+			return m, tea.Quit
+		}
+		m.input = ""
+		return m, nil
+	case tea.KeyEnter:
+		return m.submitChat()
+	case tea.KeyBackspace:
+		if r := []rune(m.input); len(r) > 0 {
+			m.input = string(r[:len(r)-1])
+		}
+		return m, nil
+	case tea.KeyRunes:
+		m.input += string(msg.Runes)
+		return m, nil
+	case tea.KeySpace:
+		// Some terminals deliver space as its own key type rather than a rune.
+		m.input += " "
+		return m, nil
+	}
+	return m, nil
+}
+
+// submitChat handles Enter: if there's text and a responder, push the owner's line,
+// flip to thinking, clear the input, and return the async Say command. With no
+// responder it pushes a one-line hint instead of calling (chat is unavailable). An
+// empty input is a no-op. NOTHING blocks here — the model call is the returned cmd.
+func (m DashboardModel) submitChat() (tea.Model, tea.Cmd) {
+	text := strings.TrimSpace(m.input)
+	if text == "" {
+		return m, nil
+	}
+	if m.chat == nil {
+		// Defensive: chat-mode key map only runs when enabled, but never crash.
+		m.transcript = append(m.transcript, chatLine{who: whoSys, text: chatHintLine})
+		m.input = ""
+		return m, nil
+	}
+	m.transcript = append(m.transcript, chatLine{who: whoYou, text: text})
+	m.input = ""
+	m.thinking = true
+	resp := m.chat
+	// The async LLM call as a tea.Cmd: bubbletea runs it OFF the Update loop and
+	// delivers the result back as a chatReplyMsg. Update/View never block on it.
+	return m, func() tea.Msg {
+		out, err := resp.Say(context.Background(), text)
+		return chatReplyMsg{text: out, err: err}
+	}
 }
 
 // Snapshot returns the latest stored snapshot (for tests).
@@ -111,9 +248,28 @@ func (m DashboardModel) View() string {
 
 	if !m.haveSnap {
 		b.WriteString(m.styles.hint.Render("waiting for first snapshot…\n"))
+		// Even before the first snapshot, the chat surface (or its hint) is shown so
+		// the owner can start talking / sees how to enable chat right away.
+		b.WriteString(m.chatView())
 		return b.String()
 	}
 
+	if m.chatEnabled() {
+		// Chat-on: a COMPACT health/account summary keeps the conversation in view.
+		b.WriteString(m.compactSummary())
+	} else {
+		// Read-only: the full health + account + positions surface (unchanged).
+		b.WriteString(m.fullSnapshotView())
+	}
+
+	b.WriteString(m.chatView())
+	return b.String()
+}
+
+// fullSnapshotView is the original read-only render: the loud health block, the
+// account P&L, and every open position. Used when chat is disabled.
+func (m DashboardModel) fullSnapshotView() string {
+	var b strings.Builder
 	// --- Health surface (most important; rendered first and loud) ---
 	b.WriteString(m.healthView())
 	b.WriteString("\n")
@@ -138,6 +294,71 @@ func (m DashboardModel) View() string {
 				p.Symbol, money(p.Qty), money(p.MarkPx), signedMoney(m, p.UnrealizedPL)))
 		}
 	}
+	return b.String()
+}
+
+// compactSummary is the trimmed health/account line shown above the chat when chat is
+// on, so the conversation has room while the owner still sees status + money at a
+// glance. Status (HALTED/LIVE), mode, exact equity, and exact P&L are all kept — the
+// money is still rendered via Decimal.String() (never float64).
+func (m DashboardModel) compactSummary() string {
+	var b strings.Builder
+	h := m.snap.Health
+	rep := m.snap.Report
+	status := m.styles.good.Render("LIVE")
+	if h.Halted {
+		reason := h.HaltReason
+		if reason == "" {
+			reason = "kill switch engaged"
+		}
+		status = m.styles.bad.Render("HALTED — " + reason)
+	}
+	b.WriteString(m.styles.prompt.Render("Status"))
+	b.WriteString("  " + status + "   " + modeLabel(h.Live) + "\n")
+	b.WriteString(fmt.Sprintf("  Equity %s   Realized %s   Unrealized %s\n",
+		money(rep.Equity), signedMoney(m, rep.RealizedPL), signedMoney(m, rep.UnrealizedPL)))
+	if len(rep.Positions) == 0 {
+		b.WriteString(m.styles.hint.Render("  flat — no open positions\n"))
+	} else {
+		b.WriteString(m.styles.hint.Render(fmt.Sprintf("  %d open position(s)\n", len(rep.Positions))))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// chatHintLine is the one-line, plain-English nudge shown when no chat backend is
+// configured: it names the FREE Nemotron path first so a key-less owner has an
+// immediate way to turn chat on.
+const chatHintLine = "Chat is available once you set up an AI backend — the FREE NVIDIA Nemotron brain works with a no-credit-card key. See /help."
+
+// chatView renders the conversation transcript, a thinking indicator while a reply is
+// in flight, and the input line — OR, when chat is disabled, a single hint line. It is
+// a pure string transform (no I/O), safe every frame.
+func (m DashboardModel) chatView() string {
+	var b strings.Builder
+	b.WriteString(m.styles.prompt.Render("Chat"))
+	b.WriteString("\n")
+
+	if !m.chatEnabled() {
+		b.WriteString(m.styles.hint.Render("  " + chatHintLine + "\n"))
+		return b.String()
+	}
+
+	for _, ln := range m.transcript {
+		switch ln.who {
+		case whoYou:
+			b.WriteString("  " + m.styles.prompt.Render("you") + " › " + ln.text + "\n")
+		case whoBucks:
+			b.WriteString("  " + m.styles.good.Render("bucks") + " › " + ln.text + "\n")
+		default: // whoSys
+			b.WriteString("  " + m.styles.hint.Render(ln.text) + "\n")
+		}
+	}
+	if m.thinking {
+		b.WriteString("  " + m.styles.hint.Render("thinking…") + "\n")
+	}
+	// The input line with a block cursor so the owner sees where they're typing.
+	b.WriteString("  " + m.styles.prompt.Render("you") + " › " + m.input + "▌\n")
 	return b.String()
 }
 

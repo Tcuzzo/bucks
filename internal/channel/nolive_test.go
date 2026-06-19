@@ -65,9 +65,10 @@ func TestMain(m *testing.M) {
 // by TestMain) did not move. Because the counter ONLY increments on a genuine
 // outbound dial, this is now a real assertion: a live channel call would open a
 // socket through the default transport, increment the counter, and fail the test.
-// Combined with TestTelegramLiveIsBuildTagged (which proves the live transport is
-// fenced behind the telegram_live tag), this is the full "no live call in the
-// default suite" guarantee.
+// The live channel is compiled into the default build (no build tag), so this
+// behavioral dial-blocker — not a structural fence — is the full "no live call in
+// the default suite" guarantee; the hermetic live tests reach a local httptest
+// server through their own transport, never http.DefaultTransport.
 func TestNoLiveTelegramInDefaultSuite(t *testing.T) {
 	before := atomic.LoadInt64(&netDialAttempts)
 

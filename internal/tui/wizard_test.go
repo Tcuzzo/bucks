@@ -69,7 +69,7 @@ func TestStepOrderIsExactAndForward(t *testing.T) {
 	if m.CurrentStep() != StepLLM {
 		t.Fatalf("after telegram: %v, want StepLLM", m.CurrentStep())
 	}
-	// LLM (pick + confirm) -> Broker
+	// LLM (OAuth — no key) -> Broker directly (OAuth carries no pasted key).
 	m = typeString(t, m, "1")
 	m, _ = send(t, m, enter())
 	if m.CurrentStep() != StepBroker {
@@ -144,8 +144,13 @@ func TestCompletingWizardYieldsValidSetupResult(t *testing.T) {
 	if res.TelegramToken == "" {
 		t.Error("SetupResult.TelegramToken is empty")
 	}
-	if res.LLM != LLMOAuthGPT {
-		t.Errorf("SetupResult.LLM = %q, want %q", res.LLM, LLMOAuthGPT)
+	if res.LLM != LLMNemotronFree {
+		t.Errorf("SetupResult.LLM = %q, want %q", res.LLM, LLMNemotronFree)
+	}
+	// The happy path pastes a free Nemotron key at the LLM-key sub-prompt; it must
+	// be captured verbatim so chat works from the saved config with no env vars.
+	if res.LLMKey != happyPathLLMKey {
+		t.Errorf("SetupResult.LLMKey = %q, want the typed key %q", res.LLMKey, happyPathLLMKey)
 	}
 	if len(res.Brokers) != 1 {
 		t.Fatalf("SetupResult.Brokers len = %d, want 1", len(res.Brokers))
@@ -188,16 +193,25 @@ func TestCompletingWizardYieldsValidSetupResult(t *testing.T) {
 	}
 }
 
+// happyPathLLMKey is the LLM key the happy path pastes (a free nvapi-... Nemotron
+// key). The completion tests assert it lands verbatim in SetupResult.LLMKey, so
+// chat works straight from the saved config with no env vars.
+const happyPathLLMKey = "nvapi-happypathkey123"
+
 // completeHappyPath drives the wizard end to end. goLive toggles a live broker +
-// the explicit live toggle so the live-gating test can reuse it.
+// the explicit live toggle so the live-gating test can reuse it. It exercises a
+// KEY-COLLECTING LLM backend (free Nemotron) so the LLM-key sub-prompt is on the
+// happy path and SetupResult.LLMKey is populated end-to-end.
 func completeHappyPath(t *testing.T, goLive bool) WizardModel {
 	t.Helper()
 	m := NewWizard()
 	m, _ = send(t, m, enter()) // welcome -> telegram
 	m = typeString(t, m, "123456789:AAH-validlookingtoken")
-	m, _ = send(t, m, enter()) // telegram -> llm
-	m = typeString(t, m, "1")  // OAuth-GPT
-	m, _ = send(t, m, enter()) // llm -> broker
+	m, _ = send(t, m, enter())            // telegram -> llm
+	m = typeString(t, m, "4")             // Free (NVIDIA Nemotron) — needs a pasted key
+	m, _ = send(t, m, enter())            // confirm choice -> opens the key sub-prompt
+	m = typeString(t, m, happyPathLLMKey) // paste the free nvapi-... key
+	m, _ = send(t, m, enter())            // key sub-prompt -> broker
 	if goLive {
 		m = typeString(t, m, "2") // Alpaca live
 	} else {
@@ -240,12 +254,28 @@ func TestFreeNemotronLLMOptionIsSelectable(t *testing.T) {
 	if !strings.Contains(v, "build.nvidia.com") {
 		t.Errorf("free-Nemotron guidance missing the build.nvidia.com signup hint; view:\n%s", v)
 	}
-	m, _ = send(t, m, enter()) // llm -> broker
+	// Confirming the free Nemotron choice does NOT jump to the broker: it opens the
+	// LLM-key sub-prompt (this path needs a pasted free nvapi-... key).
+	m, _ = send(t, m, enter()) // confirm -> key sub-prompt
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("confirming Nemotron advanced off StepLLM to %v; expected the key sub-prompt to stay on StepLLM", m.CurrentStep())
+	}
+	// The key sub-prompt names the free nvapi- key and is masked (never echoes the key).
+	kv := m.View()
+	if !strings.Contains(kv, "nvapi-") {
+		t.Errorf("Nemotron key sub-prompt missing the nvapi- hint; view:\n%s", kv)
+	}
+	const nemoKey = "nvapi-freekey123456"
+	m = typeString(t, m, nemoKey)
+	if mv := m.View(); strings.Contains(mv, nemoKey) {
+		t.Errorf("LLM key was echoed in plaintext in the view (must be masked); view:\n%s", mv)
+	}
+	m, _ = send(t, m, enter()) // key -> broker
 	if m.CurrentStep() != StepBroker {
-		t.Fatalf("free-Nemotron choice did not advance; at %v err=%q", m.CurrentStep(), m.Err())
+		t.Fatalf("free-Nemotron key did not advance to broker; at %v err=%q", m.CurrentStep(), m.Err())
 	}
 
-	// Drive the rest of the wizard and assert the choice persists into the result.
+	// Drive the rest of the wizard and assert the choice + key persist into the result.
 	m = typeString(t, m, "1") // Alpaca paper
 	m = typeString(t, m, "PKtestbrokerkey123")
 	m, _ = send(t, m, enter())                    // key -> secret sub-prompt
@@ -258,6 +288,193 @@ func TestFreeNemotronLLMOptionIsSelectable(t *testing.T) {
 	}
 	if got := m.Result().LLM; got != LLMNemotronFree {
 		t.Errorf("SetupResult.LLM = %q, want %q", got, LLMNemotronFree)
+	}
+	if got := m.Result().LLMKey; got != nemoKey {
+		t.Errorf("SetupResult.LLMKey = %q, want the typed Nemotron key %q", got, nemoKey)
+	}
+}
+
+// atLLMStep drives the wizard to StepLLM (fresh, no backend confirmed yet).
+func atLLMStep(t *testing.T) WizardModel {
+	t.Helper()
+	m := NewWizard()
+	m, _ = send(t, m, enter()) // welcome -> telegram
+	m = typeString(t, m, "123456789:AAH-validlookingtoken")
+	m, _ = send(t, m, enter()) // telegram -> llm
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("atLLMStep landed on %v", m.CurrentStep())
+	}
+	return m
+}
+
+// TestLLMOAuthAdvancesWithNoKey proves the OAuth-GPT path needs NO pasted key:
+// confirming it advances straight to StepBroker and leaves SetupResult.LLMKey empty
+// (OAuth carries no directly-usable HTTP key here).
+func TestLLMOAuthAdvancesWithNoKey(t *testing.T) {
+	m := atLLMStep(t)
+	m = typeString(t, m, "1")  // OAuth-GPT
+	m, _ = send(t, m, enter()) // confirm -> should advance directly (no key prompt)
+	if m.CurrentStep() != StepBroker {
+		t.Fatalf("OAuth-GPT did not advance directly to broker; at %v err=%q", m.CurrentStep(), m.Err())
+	}
+	// Finish the wizard and assert LLMKey stays empty for OAuth.
+	m = typeString(t, m, "1") // Alpaca paper
+	m = typeString(t, m, "PKtestbrokerkey123")
+	m, _ = send(t, m, enter())
+	m = typeString(t, m, "SKtestbrokersecret456")
+	m, _ = send(t, m, enter())
+	m = answerIntake(t, m)
+	m, _ = send(t, m, enter())
+	if !m.Done() {
+		t.Fatalf("wizard not done; err=%q", m.Err())
+	}
+	if got := m.Result().LLMKey; got != "" {
+		t.Errorf("OAuth path SetupResult.LLMKey = %q, want empty (OAuth carries no pasted key)", got)
+	}
+}
+
+// TestLLMCloudKeyCollectsKey proves the cloud-key backend opens the key sub-prompt
+// and captures the pasted key verbatim into SetupResult.LLMKey.
+func TestLLMCloudKeyCollectsKey(t *testing.T) {
+	m := atLLMStep(t)
+	m = typeString(t, m, "2")  // cloud API key
+	m, _ = send(t, m, enter()) // confirm -> opens key sub-prompt (does NOT advance)
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("cloud-key confirm advanced off StepLLM to %v; expected the key sub-prompt", m.CurrentStep())
+	}
+	const cloudKey = "sk-cloudkey-abcdef123456"
+	m = typeString(t, m, cloudKey)
+	if mv := m.View(); strings.Contains(mv, cloudKey) {
+		t.Errorf("cloud key was echoed in plaintext (must be masked); view:\n%s", mv)
+	}
+	m, _ = send(t, m, enter()) // key -> broker
+	if m.CurrentStep() != StepBroker {
+		t.Fatalf("cloud key did not advance to broker; at %v err=%q", m.CurrentStep(), m.Err())
+	}
+	// Finish and assert the key persisted.
+	m = typeString(t, m, "1")
+	m = typeString(t, m, "PKtestbrokerkey123")
+	m, _ = send(t, m, enter())
+	m = typeString(t, m, "SKtestbrokersecret456")
+	m, _ = send(t, m, enter())
+	m = answerIntake(t, m)
+	m, _ = send(t, m, enter())
+	if !m.Done() {
+		t.Fatalf("wizard not done; err=%q", m.Err())
+	}
+	if got := m.Result().LLMKey; got != cloudKey {
+		t.Errorf("SetupResult.LLMKey = %q, want the typed cloud key %q", got, cloudKey)
+	}
+	if got := m.Result().LLM; got != LLMCloudKey {
+		t.Errorf("SetupResult.LLM = %q, want %q", got, LLMCloudKey)
+	}
+}
+
+// TestLLMBothCollectsCloudKey proves the "both" backend (which includes a cloud-key
+// backend) collects the cloud key into SetupResult.LLMKey, like the cloud-key path.
+func TestLLMBothCollectsCloudKey(t *testing.T) {
+	m := atLLMStep(t)
+	m = typeString(t, m, "3")  // both
+	m, _ = send(t, m, enter()) // confirm -> opens key sub-prompt
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("both confirm advanced off StepLLM to %v; expected the key sub-prompt", m.CurrentStep())
+	}
+	const bothKey = "sk-bothkey-abcdef123456"
+	m = typeString(t, m, bothKey)
+	m, _ = send(t, m, enter()) // key -> broker
+	if m.CurrentStep() != StepBroker {
+		t.Fatalf("both key did not advance to broker; at %v err=%q", m.CurrentStep(), m.Err())
+	}
+	m = typeString(t, m, "1")
+	m = typeString(t, m, "PKtestbrokerkey123")
+	m, _ = send(t, m, enter())
+	m = typeString(t, m, "SKtestbrokersecret456")
+	m, _ = send(t, m, enter())
+	m = answerIntake(t, m)
+	m, _ = send(t, m, enter())
+	if !m.Done() {
+		t.Fatalf("wizard not done; err=%q", m.Err())
+	}
+	if got := m.Result().LLMKey; got != bothKey {
+		t.Errorf("SetupResult.LLMKey = %q, want the typed key %q", got, bothKey)
+	}
+	if got := m.Result().LLM; got != LLMBoth {
+		t.Errorf("SetupResult.LLM = %q, want %q", got, LLMBoth)
+	}
+}
+
+// TestBlankLLMKeyIsRejected proves a blank key in the key sub-prompt is rejected
+// inline (stays on StepLLM, no advance, no crash) for the key-requiring paths.
+func TestBlankLLMKeyIsRejected(t *testing.T) {
+	m := atLLMStep(t)
+	m = typeString(t, m, "4")  // Nemotron — needs a key
+	m, _ = send(t, m, enter()) // -> key sub-prompt
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("Nemotron confirm did not open key sub-prompt; at %v", m.CurrentStep())
+	}
+	// Enter with no key -> rejected inline, stays on StepLLM.
+	m, cmd := send(t, m, enter())
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("blank LLM key advanced to %v, want stay StepLLM", m.CurrentStep())
+	}
+	if m.Err() == "" {
+		t.Fatal("blank LLM key produced no inline error")
+	}
+	if cmd != nil {
+		t.Fatal("rejecting a blank LLM key should not emit a command")
+	}
+	// Recovery: a valid key now advances.
+	m = typeString(t, m, "nvapi-recoverkey123")
+	m, _ = send(t, m, enter())
+	if m.CurrentStep() != StepBroker {
+		t.Fatalf("valid key after recovery did not advance; at %v err=%q", m.CurrentStep(), m.Err())
+	}
+}
+
+// TestEscFromLLMKeyReturnsToChoice proves esc/back from the LLM key sub-prompt
+// returns to the backend choice (not off StepLLM), mirroring the broker secret
+// back behavior — the owner can re-pick the backend without losing their place.
+func TestEscFromLLMKeyReturnsToChoice(t *testing.T) {
+	m := atLLMStep(t)
+	m = typeString(t, m, "4")  // Nemotron
+	m, _ = send(t, m, enter()) // -> key sub-prompt
+	m = typeString(t, m, "nvapi-partial")
+	m, _ = send(t, m, esc()) // back to the backend choice (still StepLLM)
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("esc from LLM key sub-prompt left StepLLM to %v", m.CurrentStep())
+	}
+	// The choice view (not the key sub-prompt) must show again: the [1/2/3/4] picker.
+	v := m.View()
+	if !strings.Contains(v, "thinking backend") {
+		t.Errorf("esc did not return to the backend choice view; view:\n%s", v)
+	}
+	// And a fresh OAuth pick from here advances correctly (state was cleared).
+	m = typeString(t, m, "1")
+	m, _ = send(t, m, enter())
+	if m.CurrentStep() != StepBroker {
+		t.Fatalf("after esc + OAuth pick, did not advance; at %v err=%q", m.CurrentStep(), m.Err())
+	}
+}
+
+// TestLLMKeyStepStaysSixSteps proves the LLM key prompt is a SUB-STATE of StepLLM,
+// not a 7th top-level step: the "step K of N" header still shows 6 real steps even
+// while the key sub-prompt is active.
+func TestLLMKeyStepStaysSixSteps(t *testing.T) {
+	if got := len(stepOrder) - 1; got != 6 {
+		t.Fatalf("expected 6 real setup steps (StepDone is terminal), got %d", got)
+	}
+	m := atLLMStep(t)
+	m = typeString(t, m, "4")  // Nemotron
+	m, _ = send(t, m, enter()) // -> key sub-prompt
+	if m.CurrentStep() != StepLLM {
+		t.Fatalf("key sub-prompt is not on StepLLM; at %v", m.CurrentStep())
+	}
+	v := m.View()
+	if !strings.Contains(v, "of 6") {
+		t.Errorf("header lost the 'of 6' step count during the LLM key sub-prompt; view:\n%s", v)
+	}
+	if !strings.Contains(v, "step 3 of 6") {
+		t.Errorf("LLM key sub-prompt header drifted off step 3 of 6; view:\n%s", v)
 	}
 }
 

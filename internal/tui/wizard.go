@@ -109,6 +109,38 @@ func (c LLMChoice) valid() bool {
 	}
 }
 
+// needsKey reports whether this backend requires a pasted API key collected at
+// setup. The cloud-key path and the free-Nemotron path each authenticate with a
+// bearer key the owner must paste; "both" includes a cloud-key backend so it needs
+// the cloud key too. OAuth-GPT carries NO directly-usable HTTP key here (it is a
+// browser/session flow), so it needs no key. This mirrors configChatBackend's
+// provider split (config-sourced chat can only build a backend for the key paths).
+func (c LLMChoice) needsKey() bool {
+	switch c {
+	case LLMCloudKey, LLMBoth, LLMNemotronFree:
+		return true
+	default:
+		return false
+	}
+}
+
+// keyPrompt returns the plain-English masked-prompt label for the chosen backend's
+// key sub-prompt (only meaningful when needsKey() is true). The Nemotron line names
+// the FREE nvapi-... key from build.nvidia.com so the no-paid-key owner knows what
+// to paste.
+func (c LLMChoice) keyPrompt() string {
+	switch c {
+	case LLMNemotronFree:
+		return "Paste your FREE NVIDIA key (nvapi-... from build.nvidia.com):"
+	case LLMCloudKey:
+		return "Paste your cloud API key:"
+	case LLMBoth:
+		return "Paste your cloud API key (for the cloud-key half of \"both\"):"
+	default:
+		return "Paste your API key:"
+	}
+}
+
 // BrokerKind is the broker the owner connects.
 type BrokerKind string
 
@@ -154,6 +186,13 @@ type SetupResult struct {
 	TelegramToken string
 	// LLM is the chosen reasoning backend.
 	LLM LLMChoice
+	// LLMKey is the owner's API key for the chosen LLM backend (e.g. a free
+	// nvapi-... key for the Nemotron path, or a cloud key). It is SENSITIVE — it is
+	// encrypted at rest with the rest of the secrets, never written to the plain
+	// config — and it is what lets chat work straight from the saved config with no
+	// env vars. Empty for the OAuth-GPT path (which carries no directly-usable HTTP
+	// key here).
+	LLMKey string
 	// Brokers are the configured broker connections (at least one).
 	Brokers []BrokerCreds
 	// Playbook is the validated owner mandate built from the intake answers.
@@ -174,6 +213,14 @@ type WizardModel struct {
 	voiceEnabled bool
 	telegram     string
 	llm          LLMChoice
+	llmKey       string
+	// llmKeyPhase is the StepLLM sub-state: once the owner confirms a backend that
+	// NEEDS a pasted key (cloud-key, both, free Nemotron) the LLM step does NOT
+	// advance — it switches to a SECOND masked prompt that captures the API key into
+	// llmKey, then advances. This keeps the outer Step order intact (the "step K of 6"
+	// counter never gains a 7th step) while collecting the key chat needs to work
+	// straight from the saved config. The OAuth-GPT path skips this (no pasted key).
+	llmKeyPhase  bool
 	brokerKind   BrokerKind
 	brokerKey    string
 	brokerSecret string
@@ -297,10 +344,19 @@ func (m WizardModel) advance() WizardModel {
 }
 
 // back moves one step backward (floored at StepWelcome) and clears transient
-// input/error so the prior step is re-entered cleanly. Within StepBroker's secret
-// sub-prompt, back returns to the key sub-prompt instead of leaving the step, so the
-// owner can correct the key without losing their place in the outer step order.
+// input/error so the prior step is re-entered cleanly. Within a step's sub-prompt,
+// back returns to that step's first prompt instead of leaving the step, so the owner
+// can correct an earlier entry without losing their place in the outer step order:
+//   - StepLLM's key sub-prompt -> back to the backend choice (drops the typed key),
+//   - StepBroker's secret sub-prompt -> back to the key sub-prompt.
 func (m WizardModel) back() WizardModel {
+	if m.step == StepLLM && m.llmKeyPhase {
+		m.llmKeyPhase = false
+		m.llmKey = ""
+		m.input = ""
+		m.errMsg = ""
+		return m
+	}
 	if m.step == StepBroker && m.brokerSecretPhase {
 		m.brokerSecretPhase = false
 		m.input = ""
@@ -352,10 +408,19 @@ func (m WizardModel) updateTelegram(k tea.KeyMsg) WizardModel {
 	return m.editInput(k)
 }
 
-// updateLLM: 1=OAuth-GPT, 2=cloud key, 3=both, 4=free NVIDIA Nemotron; enter
-// confirms the current choice. Option 4 is the no-paid-key, no-Ollama path: the
-// owner pastes a free nvapi-... key at first chat (the on-screen guidance says how).
+// updateLLM collects the reasoning backend AND — for the key-based backends — the
+// REAL API key, in two sequential prompts mirroring the broker key+secret pattern.
+// First prompt: 1=OAuth-GPT, 2=cloud key, 3=both, 4=free NVIDIA Nemotron; enter
+// confirms the choice. For a backend that needs a pasted key (cloud-key, both, free
+// Nemotron) the step does NOT advance on confirm — it switches to the key sub-prompt
+// (llmKeyPhase) and only a non-empty key advances off StepLLM. OAuth-GPT carries no
+// pasted key, so it advances directly and SetupResult.LLMKey stays empty (correct —
+// OAuth is a browser/session flow, not a bearer key). Option 4 is the no-paid-key,
+// no-Ollama path: the owner pastes a free nvapi-... key (the sub-prompt says where).
 func (m WizardModel) updateLLM(k tea.KeyMsg) WizardModel {
+	if m.llmKeyPhase {
+		return m.updateLLMKey(k)
+	}
 	if k.Type == tea.KeyRunes {
 		switch string(k.Runes) {
 		case "1":
@@ -378,9 +443,37 @@ func (m WizardModel) updateLLM(k tea.KeyMsg) WizardModel {
 			m.errMsg = "Pick a backend: 1) OAuth-GPT  2) cloud key  3) both  4) Free (NVIDIA Nemotron)."
 			return m
 		}
+		if m.llm.needsKey() {
+			// Key-based backend — open the key sub-prompt WITHOUT advancing the step. The
+			// outer Step order is untouched (still "step 3 of 6").
+			m.llmKeyPhase = true
+			m.input = ""
+			m.errMsg = ""
+			return m
+		}
+		// OAuth-GPT: no pasted key, advance straight off StepLLM (LLMKey stays empty).
 		return m.advance()
 	}
 	return m
+}
+
+// updateLLMKey is the second StepLLM sub-prompt: it collects the REAL API key for a
+// key-based backend with the same discipline as the broker prompts — a blank key is
+// rejected inline (stays on StepLLM, no advance, no crash). Only a non-empty key
+// stores m.llmKey and advances off StepLLM. The key is stored exactly as entered (no
+// placeholder is ever synthesized) so chat can authenticate from the saved config.
+func (m WizardModel) updateLLMKey(k tea.KeyMsg) WizardModel {
+	if k.Type == tea.KeyEnter {
+		key := strings.TrimSpace(m.input)
+		if key == "" {
+			m.errMsg = "API key can't be empty — paste your " + string(m.llm) + " key (OAuth-GPT needs none; press esc to switch)."
+			return m
+		}
+		m.llmKey = key
+		m.llmKeyPhase = false
+		return m.advance()
+	}
+	return m.editInput(k)
 }
 
 // updateBroker collects, in two sequential masked prompts, the REAL API key AND
@@ -526,6 +619,7 @@ func (m WizardModel) updateSafety(k tea.KeyMsg) WizardModel {
 			VoiceEnabled:  m.voiceEnabled,
 			TelegramToken: m.telegram,
 			LLM:           m.llm,
+			LLMKey:        m.llmKey,
 			Brokers: []BrokerCreds{{
 				Kind:   m.brokerKind,
 				Key:    m.brokerKey,
