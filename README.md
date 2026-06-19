@@ -4,7 +4,7 @@
 
 # BUCKS
 
-**Version v1.2.2** · MIT · paper-trading by default · check yours with `bucks version`
+**Version v1.3.0** · MIT · paper-trading by default · check yours with `bucks version`
 
 **BUCKS is a trading agent — a predator, not an assistant.** The name is a play on
 *buck* (the deer) and *bucks* (money): an **8-point buck** with a dollar-sign motif who
