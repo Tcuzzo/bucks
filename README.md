@@ -4,8 +4,6 @@
 
 # BUCKS
 
-**Version v1.3.0** · MIT · paper-trading by default · check yours with `bucks version`
-
 **BUCKS is a trading agent — a predator, not an assistant.** The name is a play on
 *buck* (the deer) and *bucks* (money): an **8-point buck** with a dollar-sign motif who
 works the markets for you inside the guardrails you set. It is not a chatbot you ask
@@ -25,7 +23,9 @@ first-timer, switching by who it is talking to.
 ## What you get
 
 - **A working trader on day one** — proven baseline strategies (momentum, mean-reversion,
-  breakout) plus a playbook-driven analyst, all behind a risk engine.
+  breakout) plus a playbook-driven analyst, all behind a risk engine. **BUCKS reads your
+  playbook — your risk tolerance, style, and sectors — and builds its OWN watchlist, picks,
+  stop distances, and position sizes from it. You don't pick tickers; it's a bot.**
 - **Paper trading on by default.** BUCKS starts in **simulation** with fake money. It only
   trades real money after you **explicitly** flip it to live — there is no accidental
   live trading.
@@ -121,9 +121,12 @@ to reach him from anywhere over Telegram (see **Run BUCKS 24/7** below).
 
 ## Going live (deliberately)
 
-Live trading is a **deliberate flip**, never a default. You connect **live** broker keys
-and explicitly enable live mode during setup. Even then, BUCKS only auto-trades **within
-your band** and asks you to approve anything above it. You can halt everything at any time.
+Live trading is a **deliberate flip**, never a default. You connect **live** broker keys and
+arm live mode during setup — and **even then, BUCKS will not place a real-money order until
+you start the session with `bucks --daemon --live`.** Without `--live`, an armed account runs
+in safe **paper / monitor** mode. Saving the arm only *remembers* your intent; going live is
+always a deliberate, per-session choice. Even live, BUCKS only auto-trades **within your band**
+and asks you to approve anything above it, and you can **/halt** everything at any time.
 
 ---
 

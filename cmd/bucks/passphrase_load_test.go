@@ -37,7 +37,7 @@ func TestBuildDashboardInteractivePromptsToUnlockOnKeychainlessLoad(t *testing.T
 	defer swapTerminalState(t, true)()
 	defer swapPrompter(t, pass)() // exactly ONE prompt — swapPrompter fails on a second
 
-	model, snap, err := buildDashboardInteractive(configPath, "", secrets.ForceFileBackend())
+	model, snap, _, err := buildDashboardInteractive(configPath, "", secrets.ForceFileBackend())
 	if err != nil {
 		t.Fatalf("buildDashboardInteractive must unlock via the prompt, got: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestBuildDashboardInteractiveUsesEnvPassphraseNoPrompt(t *testing.T) {
 	defer swapTerminalState(t, true)()
 	defer swapPrompter(t)() // zero scripted answers: any prompt fails the test
 
-	if _, _, err := buildDashboardInteractive(configPath, pass, secrets.ForceFileBackend()); err != nil {
+	if _, _, _, err := buildDashboardInteractive(configPath, pass, secrets.ForceFileBackend()); err != nil {
 		t.Fatalf("with the env passphrase, load must succeed with no prompt: %v", err)
 	}
 }
@@ -87,7 +87,7 @@ func TestBuildDashboardInteractiveDoesNotPromptWhenNotATerminal(t *testing.T) {
 	defer swapTerminalState(t, false)() // NOT a terminal — never prompt
 	defer swapPrompter(t)()             // any prompt call fails the test
 
-	_, _, err := buildDashboardInteractive(configPath, "", secrets.ForceFileBackend())
+	_, _, _, err := buildDashboardInteractive(configPath, "", secrets.ForceFileBackend())
 	if err == nil {
 		t.Fatal("non-interactive load with no passphrase must fail (not silently succeed, not prompt)")
 	}

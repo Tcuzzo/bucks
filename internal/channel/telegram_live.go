@@ -205,12 +205,16 @@ func (t *TelegramChannel) post(ctx context.Context, method string, body map[stri
 	url := t.apiBase + "/" + method
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
 	if err != nil {
-		return fmt.Errorf("channel: build %s request: %w", method, err)
+		// The error can carry the token-bearing URL; redact before it is wrapped/logged.
+		return fmt.Errorf("channel: build %s request: %w", method, &redactedError{err: err, apiBase: t.apiBase})
 	}
 	req.Header.Set("Content-Type", "application/json")
 	res, err := t.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("channel: %s: %w", method, err)
+		// http.Client.Do returns a *url.Error embedding the full request URL (with the bot
+		// token); redact it so the secret never reaches a log line. Unwrap is preserved so
+		// ctx-cancel classification still works.
+		return fmt.Errorf("channel: %s: %w", method, &redactedError{err: err, apiBase: t.apiBase})
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {

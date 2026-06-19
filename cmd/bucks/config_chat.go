@@ -49,49 +49,74 @@ func newChatResponder(r tui.SetupResult) (tui.ChatResponder, error) {
 	return chatterResponder{c: ch}, nil
 }
 
-// configChatBackend resolves the chat backend FROM THE SAVED SETUP (not env), so a
-// user can talk to BUCKS right after the wizard with zero env vars. It MIRRORS
-// envChatBackend's provider logic, but the provider + key come from the persisted
-// config:
+// codexAvailable reports whether the codex CLI is usable (installed + on PATH) — the
+// "sign in with ChatGPT, no API key" path. It is a package var so tests can simulate a
+// customer WITH or WITHOUT codex deterministically.
+var codexAvailable = analyst.CodexAvailable
+
+// configChatBackends resolves the ORDERED chat backends FROM THE SAVED SETUP (not env),
+// primary first, so a user can talk to BUCKS right after the wizard with zero env vars. It
+// returns an empty list (NOT an error) when the saved config yields nothing usable, so the
+// caller can fall back to env or open the dashboard read-only — never a fabricated backend.
 //
-//   - LLMNemotronFree -> the FREE NVIDIA NIM (Nemotron) OpenAICompat backend, keyed
-//     by the saved nvapi-... key. This is the no-paid-key, no-Ollama path.
+//   - LLMNemotronFree -> the FREE NVIDIA NIM (Nemotron) backend, keyed by the saved
+//     nvapi-... key. The universal no-paid-key, no-Ollama, works-for-any-customer path.
 //   - LLMCloudKey     -> the Ollama-style CloudKeyBackend, keyed by the saved key.
-//   - LLMOAuthGPT / LLMBoth -> there is no directly-usable HTTP backend buildable from
-//     config here (OAuth-GPT is a browser/session flow, not a bearer key), so it
-//     returns (nil, nil) — graceful, NEVER a fabricated backend.
+//   - LLMOAuthGPT     -> ChatGPT via the locally-installed codex CLI (the owner's ChatGPT
+//     login, no API key). Built ONLY when codex is available; otherwise empty so the
+//     dashboard guides the owner to the free brain — a customer without codex is never
+//     stranded on a dead default.
+//   - LLMBoth         -> ChatGPT (codex) PRIMARY + the saved cloud key as FALLBACK, in that
+//     order, so a codex hiccup or quota limit fails over to the customer's own key.
 //
-// Construction is OFFLINE (no network call); only a later Say hits the wire. A
-// missing key for a key-based path yields (nil, nil) so the dashboard still opens
-// read-only with the "configure a backend" hint rather than a half-built backend.
-func configChatBackend(r tui.SetupResult) (analyst.Backend, error) {
+// Construction is OFFLINE (no network/codex call); only a later Say runs a backend.
+func configChatBackends(r tui.SetupResult) ([]analyst.Backend, error) {
 	key := strings.TrimSpace(r.LLMKey)
 	switch r.LLM {
 	case tui.LLMNemotronFree:
 		if key == "" {
 			return nil, nil
 		}
-		// The free brain: NVIDIA NIM via its provider profile (base URL + default
-		// Nemotron model), keyed by the owner's saved free key. Reuses the SAME
-		// OpenAICompat path the env "nemotron" provider uses, so the two can't drift.
 		profile, err := analyst.ProviderProfileByName("nemotron")
 		if err != nil {
 			return nil, err
 		}
-		return analyst.NewOpenAICompatBackend(profile, key, ""), nil
+		return []analyst.Backend{analyst.NewOpenAICompatBackend(profile, key, "")}, nil
 	case tui.LLMCloudKey:
 		if key == "" {
 			return nil, nil
 		}
-		// The cloud-key path: the Ollama-style CloudKeyBackend, named "chat-cloud" to
-		// match the env path. The base URL/model default inside the backend (the saved
-		// config carries no separate base URL in this slice), so the user only needs
-		// their key.
-		return analyst.NewCloudKeyBackend("chat-cloud", cloudKeyBaseURL, key, "", nil), nil
+		return []analyst.Backend{analyst.NewCloudKeyBackend("chat-cloud", cloudKeyBaseURL, key, "", nil)}, nil
+	case tui.LLMOAuthGPT:
+		if codexAvailable() {
+			return []analyst.Backend{analyst.NewCodexBackend("oauth-gpt", "", nil)}, nil
+		}
+		return nil, nil
+	case tui.LLMBoth:
+		var backends []analyst.Backend
+		if codexAvailable() {
+			backends = append(backends, analyst.NewCodexBackend("oauth-gpt", "", nil))
+		}
+		if key != "" {
+			backends = append(backends, analyst.NewCloudKeyBackend("chat-cloud", cloudKeyBaseURL, key, "", nil))
+		}
+		return backends, nil // may be empty -> graceful
 	default:
-		// OAuth-GPT / Both: no directly-usable HTTP backend from config. Graceful.
 		return nil, nil
 	}
+}
+
+// configChatBackend returns the single PRIMARY backend from the saved config (or nil when
+// none) — the thin seam tests assert on. configChatBackends is the full ordered list.
+func configChatBackend(r tui.SetupResult) (analyst.Backend, error) {
+	backends, err := configChatBackends(r)
+	if err != nil {
+		return nil, err
+	}
+	if len(backends) == 0 {
+		return nil, nil
+	}
+	return backends[0], nil
 }
 
 // cloudKeyBaseURL is the default Ollama-cloud endpoint for the saved cloud-key path.
@@ -107,15 +132,17 @@ const cloudKeyBaseURL = "https://ollama.com"
 // (nil, nil): the dashboard opens read-only with the "configure a backend" hint and
 // NEVER blocks launch or fabricates a model.
 func configChatter(r tui.SetupResult) (*chat.Chatter, error) {
-	backend, err := configChatBackend(r)
+	backends, err := configChatBackends(r)
 	if err != nil {
 		return nil, err
 	}
-	if backend == nil {
+	if len(backends) == 0 {
 		// Config gave us nothing usable — honor the existing BUCKS_CHAT_* env path so a
 		// power user's env still works from the dashboard.
 		return envChatter()
 	}
 	persona := chat.NewPersona("")
-	return chat.NewChatter(persona, []analyst.Backend{backend})
+	// The full ordered list (e.g. codex primary + cloud-key fallback for "both") so a
+	// downgrade fails over and is recorded, never a silent single-backend swap.
+	return chat.NewChatter(persona, backends)
 }

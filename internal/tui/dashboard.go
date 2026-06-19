@@ -243,6 +243,11 @@ func (m DashboardModel) CurrentSnapshot() (Snapshot, bool) { return m.snap, m.ha
 // from orders.Decimal via String() (never float64).
 func (m DashboardModel) View() string {
 	var b strings.Builder
+	// The BUCKS wordmark sits UP TOP on every dashboard frame — the brand mark leads, then a
+	// thin locator line. RenderBanner is a pure colored-string transform (no I/O), safe to
+	// render every frame, and keeps the never-stall invariant.
+	b.WriteString(RenderBanner())
+	b.WriteString("\n")
 	b.WriteString(m.styles.header.Render("$ BUCKS — live dashboard"))
 	b.WriteString("\n\n")
 

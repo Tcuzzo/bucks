@@ -118,10 +118,11 @@ func (c *daemonCommandContext) Report() channel.Report {
 // signal-free run hook used by the e2e test to drive the gateway directly. Production
 // leaves them zero and runDaemon fills the real values.
 type daemonConfig struct {
-	apiBase    string           // overrides the Telegram base (tests inject httptest.URL)
-	httpClient *http.Client     // overrides the default client (tests inject srv.Client())
-	logw       io.Writer        // where the plain start/stop lines go (defaults to os.Stdout)
-	secretOpts []secrets.Option // secrets-store backend opts; empty in prod (keychain), ForceFileBackend in tests
+	apiBase     string           // overrides the Telegram base (tests inject httptest.URL)
+	httpClient  *http.Client     // overrides the default client (tests inject srv.Client())
+	logw        io.Writer        // where the plain start/stop lines go (defaults to os.Stdout)
+	secretOpts  []secrets.Option // secrets-store backend opts; empty in prod (keychain), ForceFileBackend in tests
+	confirmLive bool             // --live: arm a REAL-MONEY venue this session (default false = paper/monitor-only)
 }
 
 // DaemonOption configures runDaemon's injectable seams.
@@ -167,6 +168,12 @@ func withSecretOpts(opts ...secrets.Option) DaemonOption {
 	}
 }
 
+// withConfirmLive sets the per-session real-money confirmation (the --live flag). Default
+// false keeps a live-configured trader in SAFE monitor/paper mode until deliberately armed.
+func withConfirmLive(v bool) DaemonOption {
+	return func(c *daemonConfig) { c.confirmLive = v }
+}
+
 // runDaemon is the testable core of `bucks --daemon`. It loads the saved setup, opens the
 // durable kill switch, assembles the single Telegram gateway (one poller, fanned to the
 // command router + approval registry), wires the channel's approver to that registry, and
@@ -204,9 +211,9 @@ func runDaemon(ctx context.Context, configPath string, opts ...DaemonOption) err
 	//    (see assembleDaemon -> buildDaemonChannel), so the two can never disagree — no
 	//    second, divergent config field. Without it the command router fails CLOSED (trusts
 	//    no one), which is correct, but we warn so the operator can fix it.
-	trustedChatID := trustedChatIDFromEnv()
+	trustedChatID := loadTrustedChatID(configPath)
 	if trustedChatID == 0 {
-		logf("bucks: no Telegram chat id configured (set BUCKS_TELEGRAM_CHAT_ID) — commands will be ignored until you set one (operator-authority fail-closed).")
+		logf("bucks: no operator paired yet — message your BUCKS bot once and that chat becomes the operator (remembered after, no env var needed).")
 	}
 
 	// 4. Assemble the gateway + the single-poller wiring (one place, so the assembly is
@@ -216,7 +223,20 @@ func runDaemon(ctx context.Context, configPath string, opts ...DaemonOption) err
 		return err
 	}
 
-	// 5. Graceful shutdown: Run returns only when ctx is canceled. The caller (production
+	// 5. Start the trade loop in the background so the saved keys are actually USED: it watches
+	//    the real account, enforces the drawdown gate + the operator's kill switch (the SAME ks
+	//    the gateway's /halt trips — they must share one instance, since IsHalted reads in-memory
+	//    state), and — once a trading policy is configured — places risk-managed orders.
+	//    Monitor-only + paper by default; real money ONLY with --live. It routes alerts/approvals
+	//    through the gateway's channel (no second poller). Stopped when the daemon shuts down.
+	var loopCh channel.Channel = channel.NewMockChannel()
+	if asm.channel != nil {
+		loopCh = asm.channel
+	}
+	stopLoop := startTradeLoop(configPath, r, loopCh, cfg.confirmLive, asm.ks, logf)
+	defer stopLoop()
+
+	// 6. Graceful shutdown: Run returns only when ctx is canceled. The caller (production
 	//    main, or the e2e test) owns the cancellation — production via signal.NotifyContext,
 	//    the test via an explicit cancel. We log start + stop plainly.
 	logf("BUCKS gateway running — reach it on Telegram (/status, /halt, /resume, /summary, /positions, /help)")
@@ -233,7 +253,8 @@ func runDaemon(ctx context.Context, configPath string, opts ...DaemonOption) err
 type assembledDaemon struct {
 	gateway  *gateway.Gateway
 	registry *gateway.ApprovalRegistry
-	channel  *channel.QuietChannel // the operator channel the trade loop will send through later (nil if env-less)
+	channel  *channel.QuietChannel // the operator channel the trade loop sends through (nil if env-less)
+	ks       *risk.KillSwitch      // the durable kill switch — SHARED with the trade loop so /halt stops it
 }
 
 // assembleDaemon builds the always-on gateway: the durable kill switch, the outbound
@@ -265,7 +286,21 @@ func assembleDaemon(configPath, token string, trustedChatID int64, r tui.SetupRe
 	// The two handlers behind the Mux: the command router (text) and the approval registry
 	// (callback taps). The registry posts keyboards to the operator chat.
 	cmdCtx := newDaemonCommandContext(ks, r)
-	router := gateway.NewCommandRouter(trustedChatID, cmdCtx, sender, gateway.WithCommandLogger(logf))
+	cmdOpts := []gateway.CommandOption{gateway.WithCommandLogger(logf)}
+	if trustedChatID == 0 {
+		// No operator configured yet — enable opt-in first-message pairing: the first chat to
+		// message becomes the operator and is PERSISTED next to the config, so a wizard-only
+		// owner never needs to set BUCKS_TELEGRAM_CHAT_ID. Fail-closed if the persist fails.
+		cmdOpts = append(cmdOpts, gateway.WithPairing(func(id int64) bool {
+			if err := saveTrustedChatID(configPath, id); err != nil {
+				logf("bucks: pairing could not persist chat %d: %v", id, err)
+				return false
+			}
+			logf("bucks: paired — chat %d now controls BUCKS (remembered).", id)
+			return true
+		}))
+	}
+	router := gateway.NewCommandRouter(trustedChatID, cmdCtx, sender, cmdOpts...)
 	registry := gateway.NewApprovalRegistry(sender, gateway.WithChatID(trustedChatID))
 	mux := &gateway.Mux{Text: router, Callback: registry}
 
@@ -291,7 +326,7 @@ func assembleDaemon(configPath, token string, trustedChatID int64, r tui.SetupRe
 	}
 	gw := gateway.NewGateway(apiBase, offsets, mux, gwOpts...)
 
-	return &assembledDaemon{gateway: gw, registry: registry, channel: quiet}, nil
+	return &assembledDaemon{gateway: gw, registry: registry, channel: quiet, ks: ks}, nil
 }
 
 // envTelegramChatID is the operator's chat id env var — the SAME name the live
@@ -337,8 +372,8 @@ func buildDaemonChannel(client *http.Client, token string, trustedChatID int64) 
 // signal-aware context (Ctrl-C / SIGTERM -> graceful shutdown) and delegates to runDaemon.
 // Splitting it out keeps runDaemon free of os/signal so the e2e test drives the real
 // assembly with an explicit cancel instead of a process signal.
-func runDaemonProcess(configPath string) error {
+func runDaemonProcess(configPath string, confirmLive bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runDaemon(ctx, configPath)
+	return runDaemon(ctx, configPath, withConfirmLive(confirmLive))
 }
