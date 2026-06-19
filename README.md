@@ -139,8 +139,11 @@ trader from anywhere on Telegram. Start it with:
 bucks --daemon
 ```
 
-That stands up BUCKS's always-on Telegram gateway. Once it's running, just message your
-BUCKS bot:
+That stands up BUCKS's always-on Telegram gateway **and the trade loop** — it watches your
+account, enforces your drawdown limit and kill switch, and (only when you arm it with
+`--live`) places risk-managed trades; otherwise it runs paper / monitor-only. The **first
+time you message your bot, that chat becomes the operator and is remembered** — no env var to
+set. Then just message your BUCKS bot:
 
 - **/status** — your trading mode (paper/live), broker, equity, and whether trading is halted
 - **/summary** — your equity and realized / unrealized profit-and-loss
@@ -161,10 +164,18 @@ To keep it running through reboots and crashes, install it as a background servi
 - **Windows** — follow [`dist/bucks-service-windows.md`](dist/bucks-service-windows.md) to
   run it at logon with Task Scheduler, or as a true service with NSSM.
 
-On a server with no system keychain, set `BUCKS_PASSPHRASE` (to unlock your encrypted
-secrets) and `BUCKS_TELEGRAM_CHAT_ID` (who is allowed to command BUCKS) — both are
-explained in those files. Without the passphrase, the daemon prints a clear message and
-exits rather than hanging.
+On a server with no system keychain, set `BUCKS_PASSPHRASE` to unlock your encrypted secrets
+(without it, the daemon prints a clear message and exits rather than hanging). You do **not**
+need to set `BUCKS_TELEGRAM_CHAT_ID` — the first chat to message your bot is paired
+automatically and remembered — but you can still set it explicitly to lock the operator chat
+ahead of time.
+
+### Keeping BUCKS current
+
+Run **`bucks update`** any time — it checks the latest GitHub release, and on confirmation
+downloads, **SHA-256 verifies**, and atomically replaces your binary in place (`bucks update
+--check` just reports whether a newer version is out). That is how every fix and feature
+reaches you: update once and you are on the latest.
 
 ---
 
