@@ -102,8 +102,18 @@ var _ Store = (*KeyringStore)(nil)
 // collide on. This option does NOT change any production call site: production calls
 // Open with no options and keeps preferring the keychain.
 type openOptions struct {
-	forceFile bool
+	forceFile  bool
+	workFactor int // hermetic-test scrypt cost (0 = production strong default)
 }
+
+// hermeticTestWorkFactor is the LOW scrypt cost used by the ForceFileBackend test seam
+// so hermetic round-trip tests stay fast (production uses the strong scryptWorkFactor).
+// scrypt at the production factor (18, ~1s) is ~1000x slower than this; under the race
+// detector on a slow CI runner that turned a hermetic test's KDF into a multi-second
+// stall that blew a test deadline. ForceFileBackend is TEST-ONLY, so a cheap KDF here is
+// correct — it never touches a real on-disk secret (production prefers the keychain or
+// NewFileStore's strong default).
+const hermeticTestWorkFactor = 8
 
 // Option configures Open. The exported options are deliberately test-isolation seams;
 // production code passes none and gets the keychain-preferred behavior unchanged.
@@ -114,7 +124,12 @@ type Option func(*openOptions)
 // t.TempDir() file with a test passphrase, never the real machine keychain (which is a
 // shared global the OS guards and which separate test binaries clobber). Production never
 // passes this; production keeps preferring the keychain.
-func ForceFileBackend() Option { return func(o *openOptions) { o.forceFile = true } }
+func ForceFileBackend() Option {
+	return func(o *openOptions) {
+		o.forceFile = true
+		o.workFactor = hermeticTestWorkFactor // keep hermetic tests fast (test-only seam)
+	}
+}
 
 // Open selects the best available backend: the OS keychain when it actually works,
 // otherwise the age-encrypted file backend at filePath locked by passphrase. The
@@ -131,7 +146,12 @@ func Open(user, filePath, passphrase string, opts ...Option) (Store, error) {
 		fn(&o)
 	}
 	if o.forceFile {
-		// Hermetic test path: no keychain probe, no global state — file backend only.
+		// Hermetic test path: no keychain probe, no global state — file backend only,
+		// with a cheap scrypt cost so tests stay fast (workFactor is set by
+		// ForceFileBackend; a 0 guard falls back to the strong default just in case).
+		if o.workFactor > 0 {
+			return newFileStoreWithWorkFactor(filePath, passphrase, o.workFactor)
+		}
 		return NewFileStore(filePath, passphrase)
 	}
 	ks := NewKeyringStore(user)
