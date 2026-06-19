@@ -24,12 +24,15 @@ type styleSet struct {
 
 func newStyles() styleSet {
 	return styleSet{
-		header: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33")),  // blue
-		prompt: lipgloss.NewStyle().Foreground(lipgloss.Color("252")),            // bright
-		hint:   lipgloss.NewStyle().Faint(true),                                  // dim hint
-		errBox: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")), // red
-		good:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("46")),  // green
-		bad:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")), // red
+		// BUCKS synthwave-neon arcade palette — cohesive with the green/gold wordmark up top:
+		// neon-cyan section headers, neon-green "go", neon-magenta danger, dim-violet hints, on
+		// the terminal's own dark background.
+		header: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#2DE2FF")),  // neon cyan
+		prompt: lipgloss.NewStyle().Foreground(lipgloss.Color("#E6E6F0")),             // bright
+		hint:   lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("#8A86C8")), // dim violet
+		errBox: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF3366")),  // neon magenta-red
+		good:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#39FF14")),  // neon green
+		bad:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF3366")),  // neon magenta-red
 		dim:    lipgloss.NewStyle().Faint(true),
 	}
 }
@@ -188,7 +191,8 @@ func (m WizardModel) View() string {
 	if m.step == StepDone {
 		header = "$ BUCKS setup — complete"
 	} else {
-		header = fmt.Sprintf("$ BUCKS setup — step %d of %d: %s", m.stepNumber(), len(stepOrder)-1, m.step.String())
+		header = fmt.Sprintf("$ BUCKS setup — step %d of %d: %s%s",
+			m.stepNumber(), len(stepOrder)-1, m.step.String(), m.headerSubProgress())
 	}
 	b.WriteString(m.styles.header.Render(header))
 	b.WriteString("\n\n")
@@ -216,10 +220,15 @@ func (m WizardModel) View() string {
 		} else {
 			b.WriteString(m.styles.prompt.Render("Which thinking backend should BUCKS use?"))
 			b.WriteString("\n")
-			b.WriteString(choiceLine("1", "OAuth-GPT", m.llm == LLMOAuthGPT))
+			b.WriteString(choiceLine("1", "ChatGPT login — no API key (needs the codex CLI)", m.llm == LLMOAuthGPT))
 			b.WriteString(choiceLine("2", "Cloud API key", m.llm == LLMCloudKey))
-			b.WriteString(choiceLine("3", "Both (primary + fallback)", m.llm == LLMBoth))
-			b.WriteString(choiceLine("4", "Free (NVIDIA Nemotron)", m.llm == LLMNemotronFree))
+			b.WriteString(choiceLine("3", "Both (ChatGPT primary + cloud-key fallback)", m.llm == LLMBoth))
+			b.WriteString(choiceLine("4", "Free (NVIDIA Nemotron) — no paid key", m.llm == LLMNemotronFree))
+			if m.llm == LLMOAuthGPT || m.llm == LLMBoth {
+				b.WriteString(m.styles.hint.Render(
+					"  ChatGPT login uses the free codex CLI you're signed into — no API key.\n" +
+						"  No codex / no ChatGPT? Press [4] for the free brain (works for everyone).\n"))
+			}
 			if m.llm == LLMNemotronFree {
 				b.WriteString(m.styles.hint.Render(
 					"  Free brain — no paid key, no Ollama needed. Get a free nvapi-... key at\n" +
@@ -302,6 +311,24 @@ func (m WizardModel) safetyView() string {
 		b.WriteString(m.styles.hint.Render("  paper broker selected — live is off by default   [enter] finish   [esc] back\n"))
 	}
 	return b.String()
+}
+
+// headerSubProgress surfaces the sub-steps that live INSIDE a single Step so the "step K of
+// 6" locator never hides them from the owner (the source of the "advertised 6 but really ~16
+// screens" complaint): the 10-question intake shows its running question, and the two masked
+// sub-prompts (the LLM API key and the broker API secret) are named. Pure string, no I/O;
+// empty when the current screen is the step's first/only one.
+func (m WizardModel) headerSubProgress() string {
+	switch {
+	case m.step == StepIntake && m.intakeIdx < len(m.intake.Questions):
+		return fmt.Sprintf(" · question %d of %d", m.intakeIdx+1, len(m.intake.Questions))
+	case m.step == StepLLM && m.llmKeyPhase:
+		return " · your API key"
+	case m.step == StepBroker && m.brokerSecretPhase:
+		return " · your API secret"
+	default:
+		return ""
+	}
 }
 
 // stepNumber is the 1-based display index of the current step (StepDone shows the

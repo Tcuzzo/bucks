@@ -118,7 +118,7 @@ func TestEndToEndWizardPersistsAndRelaunchOpensDashboard(t *testing.T) {
 	}
 
 	// Phase 4 — the dashboard opens on the owner's real saved state, not an empty stub.
-	_, snap, err := buildDashboardFromConfig(cfg, pass, fileBackend)
+	_, snap, _, err := buildDashboardFromConfig(cfg, pass, fileBackend)
 	if err != nil {
 		t.Fatalf("buildDashboardFromConfig failed: %v", err)
 	}

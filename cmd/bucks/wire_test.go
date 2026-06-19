@@ -132,7 +132,7 @@ func TestBuildDashboardFromConfigLoadsRealState(t *testing.T) {
 		t.Fatalf("persistSetup: %v", err)
 	}
 
-	model, snap, err := buildDashboardFromConfig(configPath, pass, secrets.ForceFileBackend())
+	model, snap, _, err := buildDashboardFromConfig(configPath, pass, secrets.ForceFileBackend())
 	if err != nil {
 		t.Fatalf("buildDashboardFromConfig: %v", err)
 	}

@@ -58,7 +58,6 @@ var knownSubcommands = map[string]bool{
 	"mascot":   true,
 	"version":  true,
 	"update":   true,
-	"doctor":   true,
 	"help":     true,
 }
 
@@ -138,14 +137,6 @@ func run(args []string) error {
 		return runUpdateStdio(args[1:])
 	}
 
-	// `bucks doctor` — health check: binary version vs latest release, Go toolchain,
-	// outdated modules, and govulncheck. Use --fix to apply remediations; --check to
-	// preview without scanning. A positional subcommand handled before flag parsing so
-	// its own flags don't collide with the top-level set.
-	if len(args) > 0 && args[0] == "doctor" {
-		return runDoctor(args[1:])
-	}
-
 	fs := flag.NewFlagSet("bucks", flag.ContinueOnError)
 	// Usage prints the FULL command list (not just the flag dump), so any path that
 	// triggers flag usage still shows how to discover the subcommands.
@@ -153,6 +144,7 @@ func run(args []string) error {
 	daemon := fs.Bool("daemon", false, "run headless (no TUI) under a service manager")
 	paperSmoke := fs.Bool("paper-smoke", false, "boot the saved config into a paper trader and place one in-band paper trade (offline acceptance), then exit")
 	chatFlag := fs.Bool("chat", false, "open the conversational REPL — talk to BUCKS like a person (backend via BUCKS_CHAT_BASEURL/_KEY/_MODEL)")
+	live := fs.Bool("live", false, "arm REAL-MONEY live trading this session (default: paper / monitor-only)")
 	configPath := fs.String("config", defaultConfigPath(), "path to the BUCKS config file")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -176,7 +168,7 @@ func run(args []string) error {
 		// no TTY attached, and shut down gracefully on Ctrl-C / SIGTERM. runDaemonProcess
 		// installs the signal-aware context and runs the long-poll loop until a signal.
 		fmt.Println("bucks: running headless (daemon) — no TUI attached")
-		return runDaemonProcess(*configPath)
+		return runDaemonProcess(*configPath, *live)
 	}
 
 	// The single, real entry-point selection: a present config opens the live
@@ -238,13 +230,19 @@ func runDashboard(configPath string) error {
 	// buildDashboardInteractive handles the keychain-less box: with no BUCKS_PASSPHRASE
 	// and a human attached, it prompts ONCE to unlock; under a daemon / piped input it
 	// does NOT prompt and returns the clear passphrase error handled below.
-	model, _, err := buildDashboardInteractive(configPath, passphraseFromEnv())
+	model, _, r, err := buildDashboardInteractive(configPath, passphraseFromEnv())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bucks: couldn't open your saved setup: %v\n", err)
 		fmt.Fprintln(os.Stderr, "Your config is at:", configPath)
 		fmt.Fprintln(os.Stderr, "If you set a passphrase, make sure BUCKS_PASSPHRASE matches it, then run `bucks` again.")
 		return err
 	}
+	// Start the Telegram gateway in the background so the bot the owner configured during
+	// setup actually responds on THIS normal launch (not only under --daemon — the gap that
+	// left their remote /halt kill switch dead). Tied to the TUI's lifetime: stop() shuts the
+	// long-poll loop down cleanly when the dashboard exits. No token -> it's a no-op.
+	stop := startLaunchGateway(configPath, r)
+	defer stop()
 	p := tea.NewProgram(model)
 	_, err = p.Run()
 	return err
@@ -269,10 +267,10 @@ func persistSetup(r tui.SetupResult, configPath, passphrase string, secretOpts .
 // LLM backend, and the account equity from the playbook capital, with no positions yet
 // (the honest flat first-open). All the load LOGIC lives here (testable); the caller's
 // only untestable part is the tea.NewProgram(...).Run() I/O shell.
-func buildDashboardFromConfig(configPath, passphrase string, secretOpts ...secrets.Option) (tui.DashboardModel, tui.Snapshot, error) {
+func buildDashboardFromConfig(configPath, passphrase string, secretOpts ...secrets.Option) (tui.DashboardModel, tui.Snapshot, tui.SetupResult, error) {
 	r, err := LoadSetup(configPath, passphrase, secretOpts...)
 	if err != nil {
-		return tui.DashboardModel{}, tui.Snapshot{}, err
+		return tui.DashboardModel{}, tui.Snapshot{}, tui.SetupResult{}, err
 	}
 	snap := initialSnapshot(r)
 	// Build the chat responder from the SAVED config so `bucks` (launch) opens with
@@ -285,7 +283,7 @@ func buildDashboardFromConfig(configPath, passphrase string, secretOpts ...secre
 	}
 	model := tui.NewDashboardWithChat(resp)
 	updated, _ := model.Update(tui.SnapshotMsg{Snapshot: snap})
-	return updated.(tui.DashboardModel), snap, nil
+	return updated.(tui.DashboardModel), snap, r, nil
 }
 
 // buildDashboardInteractive opens the saved dashboard, handling the keychain-less box on
@@ -297,19 +295,19 @@ func buildDashboardFromConfig(configPath, passphrase string, secretOpts ...secre
 // it does NOT prompt: it returns the ErrPassphraseRequired so runDashboard prints the
 // clear "set BUCKS_PASSPHRASE" message instead of hanging on a TTY that isn't there. Any
 // other load error (wrong passphrase, corrupt file, missing config) is returned as-is.
-func buildDashboardInteractive(configPath, envPass string, secretOpts ...secrets.Option) (tui.DashboardModel, tui.Snapshot, error) {
-	model, snap, err := buildDashboardFromConfig(configPath, envPass, secretOpts...)
+func buildDashboardInteractive(configPath, envPass string, secretOpts ...secrets.Option) (tui.DashboardModel, tui.Snapshot, tui.SetupResult, error) {
+	model, snap, r, err := buildDashboardFromConfig(configPath, envPass, secretOpts...)
 	if err == nil {
-		return model, snap, nil
+		return model, snap, r, nil
 	}
 	// Only the "needs a passphrase, none given, and a human is here" case prompts.
 	if !errors.Is(err, secrets.ErrPassphraseRequired) || envPass != "" || !stdinIsTerminal() {
-		return tui.DashboardModel{}, tui.Snapshot{}, err
+		return tui.DashboardModel{}, tui.Snapshot{}, tui.SetupResult{}, err
 	}
 	fmt.Fprintln(os.Stderr, "This machine has no system keychain — unlock your saved keys with your passphrase.")
 	pass, perr := promptUnlockPassphrase()
 	if perr != nil {
-		return tui.DashboardModel{}, tui.Snapshot{}, perr
+		return tui.DashboardModel{}, tui.Snapshot{}, tui.SetupResult{}, perr
 	}
 	return buildDashboardFromConfig(configPath, pass, secretOpts...)
 }

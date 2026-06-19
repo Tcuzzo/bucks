@@ -57,6 +57,13 @@ func TestConfigChatterOAuthOnlyNoEnv(t *testing.T) {
 	t.Setenv(envChatProvider, "")
 	t.Setenv(envChatModel, "")
 
+	// Simulate a CUSTOMER WITHOUT codex installed: OAuth-GPT then has no codex brain to
+	// build, so it must yield nothing (graceful) and the dashboard guides them to the free
+	// brain — never a fabricated backend.
+	prevCodex := codexAvailable
+	codexAvailable = func() bool { return false }
+	defer func() { codexAvailable = prevCodex }()
+
 	r := tui.SetupResult{LLM: tui.LLMOAuthGPT}
 
 	backend, err := configChatBackend(r)
@@ -64,7 +71,7 @@ func TestConfigChatterOAuthOnlyNoEnv(t *testing.T) {
 		t.Fatalf("configChatBackend errored: %v", err)
 	}
 	if backend != nil {
-		t.Errorf("OAuth-only config should yield no directly-usable HTTP backend, got %q", backend.Name())
+		t.Errorf("OAuth-GPT with no codex should yield no backend, got %q", backend.Name())
 	}
 
 	ch, err := configChatter(r)
@@ -84,6 +91,11 @@ func TestConfigChatterFallsBackToEnv(t *testing.T) {
 	t.Setenv(envChatKey, "nvapi-env-key")
 	t.Setenv(envChatBaseURL, "")
 	t.Setenv(envChatModel, "")
+
+	// No codex -> OAuth-GPT config yields no backend, so the env path must take over.
+	prevCodex := codexAvailable
+	codexAvailable = func() bool { return false }
+	defer func() { codexAvailable = prevCodex }()
 
 	r := tui.SetupResult{LLM: tui.LLMOAuthGPT} // config yields nothing
 
@@ -117,6 +129,65 @@ func TestConfigChatterCloudKey(t *testing.T) {
 	}
 	if backend.Name() != "chat-cloud" {
 		t.Errorf("backend.Name() = %q, want %q (Ollama-style cloud-key backend)", backend.Name(), "chat-cloud")
+	}
+}
+
+// TestConfigChatterOAuthUsesCodexWhenAvailable proves the OAuth-GPT choice builds the
+// codex-backed ChatGPT brain (no API key) when codex is installed — so a user (operator or a
+// customer who installed codex) who picks the default gets a WORKING chat, not a dead end.
+func TestConfigChatterOAuthUsesCodexWhenAvailable(t *testing.T) {
+	t.Setenv(envChatBaseURL, "")
+	t.Setenv(envChatKey, "")
+	t.Setenv(envChatProvider, "")
+	t.Setenv(envChatModel, "")
+
+	prevCodex := codexAvailable
+	codexAvailable = func() bool { return true } // codex installed + logged in
+	defer func() { codexAvailable = prevCodex }()
+
+	r := tui.SetupResult{LLM: tui.LLMOAuthGPT}
+	backend, err := configChatBackend(r)
+	if err != nil {
+		t.Fatalf("configChatBackend errored: %v", err)
+	}
+	if backend == nil {
+		t.Fatal("OAuth-GPT with codex available must build the codex brain, got nil")
+	}
+	if backend.Name() != "oauth-gpt" {
+		t.Errorf("backend.Name() = %q, want oauth-gpt (codex brain)", backend.Name())
+	}
+	ch, err := configChatter(r)
+	if err != nil {
+		t.Fatalf("configChatter errored: %v", err)
+	}
+	if ch == nil {
+		t.Fatal("OAuth-GPT with codex available must yield a non-nil chatter")
+	}
+}
+
+// TestConfigChatterBothCodexPrimaryCloudFallback proves "Both" wires codex as the PRIMARY
+// brain and the saved cloud key as the ordered FALLBACK — a codex hiccup or quota limit
+// fails over to the customer's own key instead of going dark.
+func TestConfigChatterBothCodexPrimaryCloudFallback(t *testing.T) {
+	t.Setenv(envChatBaseURL, "")
+	t.Setenv(envChatKey, "")
+	t.Setenv(envChatProvider, "")
+	t.Setenv(envChatModel, "")
+
+	prevCodex := codexAvailable
+	codexAvailable = func() bool { return true }
+	defer func() { codexAvailable = prevCodex }()
+
+	r := tui.SetupResult{LLM: tui.LLMBoth, LLMKey: "sk-cloud-fallback"}
+	backends, err := configChatBackends(r)
+	if err != nil {
+		t.Fatalf("configChatBackends errored: %v", err)
+	}
+	if len(backends) != 2 {
+		t.Fatalf("Both should yield codex primary + cloud fallback (2 backends), got %d", len(backends))
+	}
+	if backends[0].Name() != "oauth-gpt" || backends[1].Name() != "chat-cloud" {
+		t.Errorf("Both order wrong: got %q,%q want oauth-gpt,chat-cloud", backends[0].Name(), backends[1].Name())
 	}
 }
 

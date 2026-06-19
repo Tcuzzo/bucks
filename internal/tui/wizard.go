@@ -363,6 +363,16 @@ func (m WizardModel) back() WizardModel {
 		m.errMsg = ""
 		return m
 	}
+	// Within the intake's multi-question run, esc rewinds ONE question (restoring that
+	// answer for editing) rather than leaving the whole section — mirroring the LLM-key and
+	// broker-secret sub-prompt back behavior. Only at the first question does esc leave the
+	// intake (handled by the generic step walk below).
+	if m.step == StepIntake && m.intakeIdx > 0 {
+		m.intakeIdx--
+		m.input = m.answers[m.intake.Questions[m.intakeIdx].Id] // restore the prior answer
+		m.errMsg = ""
+		return m
+	}
 	for i, s := range stepOrder {
 		if s == m.step && i > 0 {
 			m.step = stepOrder[i-1]

@@ -10,7 +10,12 @@ import (
 // helpCommandNames are the user-facing command words the top-level help MUST list,
 // so a user can discover them (they are dispatched before flag parsing and thus
 // never show up in the flag usage).
-var helpCommandNames = []string{"chat", "summary", "research", "read", "version", "update", "doctor", "logo"}
+var helpCommandNames = []string{
+	// subcommands
+	"chat", "summary", "research", "read", "version", "update", "logo", "mascot", "help",
+	// dash / flag commands — the operator wants these listed too
+	"--daemon", "--paper-smoke", "--chat", "--config", "--live", "-h", "--help",
+}
 
 // TestRunHelp_ListsEveryCommand proves the real runHelp entry point prints the
 // header and names EVERY command, driven with an injected buffer (offline).
@@ -61,8 +66,7 @@ func TestUnknownCommand_ErrorsWithHelp(t *testing.T) {
 func TestKnownSubcommandsMatchDispatch(t *testing.T) {
 	want := map[string]bool{
 		"chat": true, "summary": true, "research": true, "read": true,
-		"logo": true, "mascot": true, "version": true, "update": true,
-		"doctor": true, "help": true,
+		"logo": true, "mascot": true, "version": true, "update": true, "help": true,
 	}
 	if len(knownSubcommands) != len(want) {
 		t.Fatalf("knownSubcommands has %d entries, want %d: %v", len(knownSubcommands), len(want), knownSubcommands)

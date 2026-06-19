@@ -50,6 +50,12 @@ func SecretConfigFrom(r tui.SetupResult) secrets.Config {
 		TelegramToken: r.TelegramToken,
 		LLMChoice:     string(r.LLM),
 		Brokers:       brokers,
+		// Carry the owner's deliberate live-arm and voice preference so the full setup
+		// survives a restart. Dropping r.Live here was the bug that silently reverted an
+		// armed owner back to paper. Going live still needs a per-session confirmation in
+		// the trade loop — persisting the arm is REMEMBERING the intent, not auto-trading.
+		Live:  r.Live,
+		Voice: r.VoiceEnabled,
 	}
 	// The LLM API key is sensitive (it authenticates chat/analyst calls), so it crosses
 	// here into the ENCRYPTED secrets — never the plain config. Persisted only when the
@@ -293,7 +299,13 @@ func LoadSetup(configPath, passphrase string, secretOpts ...secrets.Option) (tui
 		LLMKey:        llmKey,
 		Brokers:       brokerCreds,
 		Playbook:      pb,
-		Live:          false, // paper default; live is a deliberate runtime flip
+		VoiceEnabled:  sc.Voice,
+		// The persisted live-ARM is carried through faithfully (sc.Live) rather than forced
+		// to false — an armed owner stays armed across restarts. This is NOT auto-live: the
+		// trade loop still defaults to paper and requires a deliberate per-session
+		// confirmation before any real order is placed. An old config (no live field)
+		// decrypts to false, the safe paper default.
+		Live: sc.Live,
 	}, nil
 }
 

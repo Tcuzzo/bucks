@@ -71,7 +71,14 @@ type CommandRouter struct {
 	cmd           CommandContext
 	send          Sender
 	logf          func(string, ...any)
+	// pair, when set (WithPairing), enables opt-in TOFU pairing: with NO trusted chat yet,
+	// the FIRST chat to message becomes the operator IF pair accepts+persists its id. nil
+	// keeps the safe default — fail CLOSED (trust no one until a chat id is configured).
+	pair func(chatID int64) bool
 }
+
+// pairedMessage confirms a successful first-message pairing to the new operator chat.
+const pairedMessage = "✅ Paired — this chat now controls BUCKS. Send /help for commands."
 
 // CommandOption configures a CommandRouter.
 type CommandOption func(*CommandRouter)
@@ -82,6 +89,22 @@ func WithCommandLogger(logf func(string, ...any)) CommandOption {
 	return func(r *CommandRouter) {
 		if logf != nil {
 			r.logf = logf
+		}
+	}
+}
+
+// WithPairing enables opt-in TOFU (trust-on-first-use) pairing: when the router starts with
+// NO trusted chat id (0), the first chat to message it is offered to pair(chatID). If pair
+// returns true (it accepted + durably persisted the id), that chat becomes the operator and the
+// router confirms; subsequent launches load the persisted id, so a wizard-only owner never sets
+// an env var. The bot token is a secret only the owner holds (so the first messager is the
+// owner), and NO Telegram command can move money (only /halt /resume /status /summary
+// /positions), bounding the blast radius of a mis-pair. Without this option the router stays
+// fail-CLOSED. A nil pair is ignored.
+func WithPairing(pair func(chatID int64) bool) CommandOption {
+	return func(r *CommandRouter) {
+		if pair != nil {
+			r.pair = pair
 		}
 	}
 }
@@ -111,10 +134,17 @@ func (r *CommandRouter) Handle(ctx context.Context, u Update) {
 	if u.Message == nil || u.Message.Text == "" {
 		return
 	}
-	// Fail CLOSED: an unconfigured trusted chat id (0) trusts NO ONE. A safety gate
-	// must never fail open when misconfigured — otherwise a chat id of 0 (e.g. an
-	// empty/unparsed config) would match every 0-valued update and trust everyone.
+	// No trusted chat yet. With opt-in pairing (WithPairing) the FIRST message pairs:
+	// persist + adopt that chat as the operator, confirm, and wait for the NEXT message to
+	// carry a command (so the pairing message itself never executes one). Without pairing this
+	// stays fail CLOSED: an unconfigured trusted chat id (0) trusts NO ONE — a safety gate must
+	// never fail open (a chat id of 0 would otherwise match every 0-valued update).
 	if r.trustedChatID == 0 {
+		if r.pair == nil || !r.pair(u.Message.Chat.ID) {
+			return
+		}
+		r.trustedChatID = u.Message.Chat.ID
+		r.reply(ctx, u.Message.Chat.ID, pairedMessage)
 		return
 	}
 	// Operator authority: only the operator's own chat may command BUCKS. Any other

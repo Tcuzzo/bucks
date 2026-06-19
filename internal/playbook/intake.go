@@ -32,7 +32,11 @@ type Question struct {
 	Id       string
 	Prompt   string
 	Type     QuestionType
-	Options  []string // for TypeEnum
+	Options  []string // for TypeEnum — the choices SHOWN to the owner
+	// Accept lists extra TypeEnum values accepted but NOT shown to the owner — legacy or
+	// alias spellings kept for back-compat (e.g. "hodl" still validates while the owner is
+	// only ever offered the plain-English "hold"). Empty for most questions.
+	Accept   []string
 	Required bool
 }
 
@@ -51,6 +55,12 @@ func (q Question) Validate(raw string) error {
 	case TypeEnum:
 		for _, opt := range q.Options {
 			if strings.EqualFold(raw, opt) {
+				return nil
+			}
+		}
+		// Hidden back-compat aliases (e.g. legacy "hodl") validate but are not advertised.
+		for _, alt := range q.Accept {
+			if strings.EqualFold(raw, alt) {
 				return nil
 			}
 		}
@@ -98,7 +108,9 @@ func DefaultIntake() Intake {
 			Options: []string{string(Conservative), string(Moderate), string(Aggressive)}, Required: true},
 		{Id: KeyCapital, Prompt: "How much capital are you funding BUCKS with (in dollars)?", Type: TypeDecimal, Required: true},
 		{Id: KeyStyle, Prompt: "What's your trading style?", Type: TypeEnum,
-			Options: []string{string(Scalp), string(Swing), string(Hodl)}, Required: true},
+			// Show the plain-English "hold" (long-term buy-and-hold); still accept the legacy
+			// "hodl" spelling so older configs/answers keep working without showing it.
+			Options: []string{string(Scalp), string(Swing), "hold"}, Accept: []string{string(Hodl)}, Required: true},
 		{Id: KeySectors, Prompt: "Which sectors/markets should BUCKS focus on (comma-separated)?", Type: TypeList, Required: false},
 		{Id: KeyMaxDrawdown, Prompt: "Worst peak-to-trough loss you'll tolerate, as a fraction (e.g. 0.20 for 20%)?", Type: TypeDecimal, Required: true},
 		{Id: KeyGoals, Prompt: "What's your goal in your own words?", Type: TypeText, Required: false},
@@ -157,7 +169,7 @@ func BuildPlaybook(answers map[string]string) (Playbook, error) {
 
 	pb := Playbook{
 		RiskTolerance: tol,
-		Style:         Style(strings.ToLower(strings.TrimSpace(answers[KeyStyle]))),
+		Style:         normalizeStyle(answers[KeyStyle]),
 		Sectors:       trimmedSectors(strings.Split(answers[KeySectors], ",")),
 		Goals:         strings.TrimSpace(answers[KeyGoals]),
 	}

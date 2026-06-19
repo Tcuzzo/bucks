@@ -168,8 +168,10 @@ func TestBuildPlaybook_RejectsContradictoryHodl(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected contradiction error for hodl+1% drawdown, got nil")
 	}
-	if !strings.Contains(err.Error(), "hodl") || !strings.Contains(err.Error(), "contradictory") {
-		t.Errorf("error %q does not explain the hodl/drawdown contradiction", err.Error())
+	// The owner-facing message uses the plain-English "hold" (the legacy "hodl" input is
+	// still accepted as an alias, but the explanation never shows the misspelling).
+	if !strings.Contains(err.Error(), "hold") || !strings.Contains(err.Error(), "contradictory") {
+		t.Errorf("error %q does not explain the hold/drawdown contradiction", err.Error())
 	}
 }
 

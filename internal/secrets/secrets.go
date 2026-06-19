@@ -66,6 +66,17 @@ type Config struct {
 	LLMChoice     string       `yaml:"llm_choice"`
 	LLMKeys       []string     `yaml:"llm_keys,omitempty"`
 	Brokers       []BrokerCred `yaml:"brokers"`
+	// Live is the owner's persisted live-trading ARM. It rides with the encrypted creds
+	// (not the plain config) because it is operationally sensitive — it is the recorded
+	// intent that the owner configured a live broker and chose to go live. Persisting it
+	// only means BUCKS REMEMBERS the arm across restarts; actually placing live orders
+	// still requires a deliberate per-session confirmation in the trade loop (paper is the
+	// boot default by construction). An older config without this field decrypts to false
+	// (paper) — the safe default — so the addition is backward compatible.
+	Live bool `yaml:"live"`
+	// Voice is the owner's voice-surface preference (non-secret, carried here so the full
+	// setup round-trips faithfully rather than being silently lost on save).
+	Voice bool `yaml:"voice"`
 }
 
 // Marshal renders the Config to YAML bytes (the plaintext that the backends encrypt).

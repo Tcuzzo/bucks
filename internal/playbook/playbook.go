@@ -63,6 +63,24 @@ func (s Style) valid() bool {
 	}
 }
 
+// normalizeStyle maps an owner's raw style answer to the canonical Style. "hold" is the
+// plain-English label the owner sees and types; it canonicalizes to Hodl (long-term
+// buy-and-hold). The legacy "hodl" spelling is still accepted as a hidden alias so older
+// saved configs and prior answers keep working, but the owner is only ever shown "hold".
+// Any other value passes through lowercased so Validate can reject it with a clear message.
+func normalizeStyle(raw string) Style {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "hold", "hodl":
+		return Hodl
+	case string(Scalp):
+		return Scalp
+	case string(Swing):
+		return Swing
+	default:
+		return Style(strings.ToLower(strings.TrimSpace(raw)))
+	}
+}
+
 // Playbook is the owner's trading profile. It is YAML-serializable (gopkg.in/
 // yaml.v3) so it can be written to and re-read from the config on disk across the
 // zip→ship→unpack round trip. Every money / fraction field is orders.Decimal and
@@ -154,7 +172,7 @@ func (p Playbook) Validate() error {
 		return fmt.Errorf("playbook: risk_tolerance %q is invalid (want conservative|moderate|aggressive)", p.RiskTolerance)
 	}
 	if !p.Style.valid() {
-		return fmt.Errorf("playbook: style %q is invalid (want scalp|swing|hodl)", p.Style)
+		return fmt.Errorf("playbook: style %q is invalid (want scalp|swing|hold)", p.Style)
 	}
 	if p.Capital.Sign() <= 0 {
 		return fmt.Errorf("playbook: capital must be > 0, got %s", p.Capital.String())
@@ -186,7 +204,7 @@ func (p Playbook) Validate() error {
 		tightDrawdown := orders.MustParseDecimal("0.10")
 		if p.MaxDrawdownPct.Cmp(tightDrawdown) < 0 {
 			return fmt.Errorf(
-				"playbook: style hodl with max_drawdown_pct %s (< 0.10) is contradictory — long-term holding rides out larger drawdowns; raise the drawdown tolerance or pick swing/scalp",
+				"playbook: a 'hold' (long-term) style with max_drawdown_pct %s (< 0.10) is contradictory — long-term holding rides out larger drawdowns; raise the drawdown tolerance or pick swing/scalp",
 				p.MaxDrawdownPct.String())
 		}
 	}
