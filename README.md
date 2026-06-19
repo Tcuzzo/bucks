@@ -46,7 +46,7 @@ first-timer, switching by who it is talking to.
 
 BUCKS isn't just a config screen — you can **talk to him like a person**:
 
-- **Chat** (`bucks chat`) — ask him anything, plain or technical; he code-switches to match you, stays honest, and **won't invent your account numbers or promise profit**. Any figure he states about your account is grounded against the real numbers.
+- **Chat — right on the launch screen.** Open BUCKS (just `bucks`) and start typing at the bottom of the dashboard to talk to him — no separate command. (`bucks chat` still gives you a plain terminal chat if you prefer.) He code-switches plain↔technical, stays honest, and **won't invent your account numbers or promise profit** — any figure about your account is grounded against the real numbers. Chat uses the **AI backend you picked in setup** (or the free Nemotron path below), so it works right after the wizard with no extra setup.
 - **Summaries** (`bucks summary`) — a plain-English "here's where you stand" of your P&L, positions, and health, with the numbers checked against reality.
 - **Research** (`bucks research "<topic>"`, `bucks read <url>`) — read-only web lookups for market context, every claim traceable to a cited source. No stray orders, no headless browser — it stays one clean binary.
 - **A free brain** — no Ollama and no paid key? Pick **Free (NVIDIA Nemotron)** at setup, paste a free `nvapi-` key from build.nvidia.com (~2 min, no card), and you're running. Groq / Cerebras / OpenRouter work the same way.
@@ -112,8 +112,10 @@ On first run you'll see the wizard. Answer the questions, and BUCKS connects to 
 broker's **paper** account and reaches **"trading (paper)"** — placing and managing
 simulated trades inside your band. When you're satisfied, you can review going live.
 
-After setup, just run `bucks` (or `bucks.exe`) to open the live dashboard, or run it
-headless under a service manager with `bucks --daemon`.
+After setup, just run `bucks` (or `bucks.exe`) to open the live dashboard — your
+positions and health up top, and a **chat line at the bottom where you can talk to
+BUCKS** right there. Or run it headless under a service manager with `bucks --daemon`
+to reach him from anywhere over Telegram (see **Run BUCKS 24/7** below).
 
 ---
 
@@ -122,6 +124,44 @@ headless under a service manager with `bucks --daemon`.
 Live trading is a **deliberate flip**, never a default. You connect **live** broker keys
 and explicitly enable live mode during setup. Even then, BUCKS only auto-trades **within
 your band** and asks you to approve anything above it. You can halt everything at any time.
+
+---
+
+## Run BUCKS 24/7 (always-on Telegram)
+
+BUCKS can run **headless** — no window open, no terminal attached — so you can reach your
+trader from anywhere on Telegram. Start it with:
+
+```sh
+bucks --daemon
+```
+
+That stands up BUCKS's always-on Telegram gateway. Once it's running, just message your
+BUCKS bot:
+
+- **/status** — your trading mode (paper/live), broker, equity, and whether trading is halted
+- **/summary** — your equity and realized / unrealized profit-and-loss
+- **/positions** — your open positions right now
+- **/halt** — stop all trading immediately (it stays stopped, even across a restart)
+- **/resume** — start trading again after a halt
+- **/help** — show this command list
+
+Only **your** Telegram chat can command BUCKS — anyone else is ignored. Above-band trades
+still arrive here as an **Approve / Deny** button, and BUCKS waits for your tap (no answer
+means no trade).
+
+To keep it running through reboots and crashes, install it as a background service:
+
+- **Linux / macOS** — use the ready-made systemd unit at
+  [`dist/bucks.service`](dist/bucks.service) (`Restart=always`, starts at boot, runs with
+  no one logged in). The file's top comment has the exact install steps.
+- **Windows** — follow [`dist/bucks-service-windows.md`](dist/bucks-service-windows.md) to
+  run it at logon with Task Scheduler, or as a true service with NSSM.
+
+On a server with no system keychain, set `BUCKS_PASSPHRASE` (to unlock your encrypted
+secrets) and `BUCKS_TELEGRAM_CHAT_ID` (who is allowed to command BUCKS) — both are
+explained in those files. Without the passphrase, the daemon prints a clear message and
+exits rather than hanging.
 
 ---
 

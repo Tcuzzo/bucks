@@ -1,0 +1,44 @@
+# BUCKS — always-on Telegram gateway (systemd --user service)
+#
+# This runs `bucks --daemon` 24/7 on whatever machine you keep BUCKS on, so you can
+# reach your trader from anywhere on Telegram (/status, /halt, /resume, /summary,
+# /positions, /help). It restarts itself if it ever crashes and comes back after a
+# reboot — even with no one logged in.
+#
+# INSTALL (one-time):
+#   1. Put the bucks binary at ~/.local/bin/bucks  (or edit ExecStart below).
+#   2. Copy this file to:   ~/.config/systemd/user/bucks.service
+#   3. Run BUCKS without an active login (so it survives logout / runs at boot):
+#         loginctl enable-linger
+#   4. Enable + start it:
+#         systemctl --user daemon-reload
+#         systemctl --user enable --now bucks
+#   5. Watch it:   systemctl --user status bucks   |   journalctl --user -u bucks -f
+#
+# HEADLESS PASSPHRASE: on a server with no system keychain, BUCKS unlocks your encrypted
+# secrets (broker keys, Telegram token) with a passphrase. Set it ONCE below (uncomment
+# the Environment= line) — or, more securely, point at a protected env file with
+# EnvironmentFile= so the secret is not stored inside this unit. Without it the daemon
+# prints a clear message and exits instead of hanging.
+
+[Unit]
+Description=BUCKS always-on Telegram gateway
+# Wait for the network to be up before polling Telegram.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/bucks --daemon
+# Self-heal: if BUCKS ever exits unexpectedly, bring it right back.
+Restart=always
+RestartSec=5
+
+# Headless secrets passphrase (NO system keychain on a server). Uncomment ONE:
+#Environment=BUCKS_PASSPHRASE=change-me
+#EnvironmentFile=%h/.config/bucks/bucks.env
+# Your Telegram chat id (who is allowed to command BUCKS). Required for commands to work.
+#Environment=BUCKS_TELEGRAM_CHAT_ID=000000000
+
+[Install]
+WantedBy=default.target

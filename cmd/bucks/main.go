@@ -171,11 +171,12 @@ func run(args []string) error {
 	}
 
 	if *daemon {
-		// Headless: no terminal program. The real loop wiring lands in a later
-		// slice; here we only prove the entry point selects the headless path and
-		// does not try to attach a TUI (which would fail without a terminal).
+		// Headless: no terminal program. Stand up BUCKS's single always-on Telegram
+		// gateway so the operator can reach the trader (/status, /halt, /resume, …) with
+		// no TTY attached, and shut down gracefully on Ctrl-C / SIGTERM. runDaemonProcess
+		// installs the signal-aware context and runs the long-poll loop until a signal.
 		fmt.Println("bucks: running headless (daemon) — no TUI attached")
-		return nil
+		return runDaemonProcess(*configPath)
 	}
 
 	// The single, real entry-point selection: a present config opens the live
@@ -274,7 +275,15 @@ func buildDashboardFromConfig(configPath, passphrase string, secretOpts ...secre
 		return tui.DashboardModel{}, tui.Snapshot{}, err
 	}
 	snap := initialSnapshot(r)
-	model := tui.NewDashboard()
+	// Build the chat responder from the SAVED config so `bucks` (launch) opens with
+	// chat available straight after setup — no env vars. A nil/errored responder must
+	// NEVER block launch: the dashboard still opens read-only with the
+	// "configure a backend" hint, so a chat-build hiccup degrades gracefully.
+	var resp tui.ChatResponder
+	if cr, cerr := newChatResponder(r); cerr == nil {
+		resp = cr // nil when config+env yield no backend -> read-only + hint
+	}
+	model := tui.NewDashboardWithChat(resp)
 	updated, _ := model.Update(tui.SnapshotMsg{Snapshot: snap})
 	return updated.(tui.DashboardModel), snap, nil
 }

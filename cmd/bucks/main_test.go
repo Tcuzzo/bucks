@@ -3,16 +3,25 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// TestDaemonModeIsHeadless proves the --daemon flag selects the headless path and
-// returns without attempting to attach a TUI (which would fail with no terminal).
-// This is the path a service manager uses; it must not block or error on a box
-// with no controlling terminal.
-func TestDaemonModeIsHeadless(t *testing.T) {
-	if err := run([]string{"--daemon"}); err != nil {
-		t.Fatalf("daemon mode returned error: %v", err)
+// TestDaemonModeSelectsHeadlessPath proves the --daemon flag selects the headless gateway
+// path (not the TUI). With a config path that has no saved setup, the daemon returns a
+// CLEAR config-load error in plain English — it does NOT attach a TUI (which would fail
+// with no terminal) and does NOT crash. (The happy path — a real config, the assembled
+// gateway serving commands and halting on the durable kill switch, then graceful shutdown —
+// is proven on the runDaemon entry point in daemon_test.go.)
+func TestDaemonModeSelectsHeadlessPath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-config.yaml")
+	err := run([]string{"--daemon", "--config", missing})
+	if err == nil {
+		t.Fatal("daemon with no saved config should return a clear error, not nil")
+	}
+	// It took the daemon (load) path, not the TUI: the error is about loading the setup.
+	if !strings.Contains(err.Error(), "load setup") && !strings.Contains(err.Error(), "daemon") {
+		t.Errorf("expected a clear daemon/load-setup error, got: %v", err)
 	}
 }
 

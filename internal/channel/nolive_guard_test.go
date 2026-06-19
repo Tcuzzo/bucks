@@ -6,28 +6,23 @@ import (
 	"testing"
 )
 
-// TestTelegramLiveIsBuildTagged proves the live Telegram implementation is fenced
-// behind the `telegram_live` build tag, so it is NEVER compiled into the default
-// test suite. It asserts the source file carries the `//go:build telegram_live`
-// constraint as its first non-empty directive. This is the structural half of the
-// "no live call in the default suite" guarantee (the behavioral half is in
-// nolive_test.go); together they prove a normal `go test ./...` cannot reach the
-// network from this package.
-func TestTelegramLiveIsBuildTagged(t *testing.T) {
+// TestTelegramChannelDefaultCompiledAndDefinedOnce documents the un-fenced state of
+// the live Telegram channel. It used to be behind a `telegram_live` build tag; that
+// tag was removed so the real channel actually ships in the binary and runs under
+// `bucks --daemon`. The "no live call in the default test suite" guarantee is now
+// purely BEHAVIORAL — the dial-blocker in nolive_test.go (TestMain) counts and refuses
+// every real outbound dial, so a normal `go test ./...` still cannot reach a live
+// operator even though the live code is compiled in. The hermetic live tests reach a
+// local httptest server through their own transport, never http.DefaultTransport.
+//
+// This test pins two things: (1) the type is part of the DEFAULT build (the
+// compile-time assertion below only builds if TelegramChannel exists without any tag),
+// and (2) it is defined in exactly one source file (no accidental duplication).
+func TestTelegramChannelDefaultCompiledAndDefinedOnce(t *testing.T) {
+	// Compiles only if TelegramChannel is in the default build (no build tag).
+	var _ Channel = (*TelegramChannel)(nil)
+
 	const file = "telegram_live.go"
-	data, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatalf("read %s: %v", file, err)
-	}
-	src := string(data)
-	if !strings.Contains(src, "//go:build telegram_live") {
-		t.Fatalf("%s must carry the `//go:build telegram_live` constraint so it is excluded from the default build", file)
-	}
-	// The live transport types must live ONLY in the tagged file.
-	if !strings.Contains(src, "type TelegramChannel struct") {
-		t.Fatalf("TelegramChannel must be defined in the build-tagged %s", file)
-	}
-	// And no OTHER (default-compiled) .go file may define the live type.
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("readdir: %v", err)
@@ -42,7 +37,7 @@ func TestTelegramLiveIsBuildTagged(t *testing.T) {
 			t.Fatalf("read %s: %v", name, rerr)
 		}
 		if strings.Contains(string(b), "type TelegramChannel struct") {
-			t.Fatalf("TelegramChannel leaked into default-compiled file %s — it must stay build-tagged", name)
+			t.Fatalf("TelegramChannel defined in %s as well as %s — it must be defined once", name, file)
 		}
 	}
 }
