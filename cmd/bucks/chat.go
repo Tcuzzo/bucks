@@ -35,11 +35,12 @@ const (
 	envChatProvider = "BUCKS_CHAT_PROVIDER"
 )
 
-// runChatStdio is the production REPL wired to the real terminal. It resolves the
-// backend from env (BUCKS_CHAT_BASEURL/_KEY/_MODEL) and drives the loop over os
-// stdin/stdout.
-func runChatStdio() error {
-	return runChat(os.Stdin, os.Stdout, envChatter)
+// runChatStdio is the production REPL wired to the real terminal. It prefers an
+// explicit BUCKS_CHAT environment override, then the encrypted saved setup.
+func runChatStdio(configPath string) error {
+	return runChat(os.Stdin, os.Stdout, func() (*chat.Chatter, error) {
+		return runtimeChatter(configPath, passphraseFromEnv())
+	})
 }
 
 // envChatter builds the Chatter from the chat env vars, or returns (nil, nil) when no
@@ -176,10 +177,9 @@ func newChatterFromEnv(baseURL, key, model, voice string) (*chat.Chatter, error)
 // way to get going, then the Ollama path. command is "chat" or "summary".
 func noBackendMessage(command string) string {
 	return fmt.Sprintf("bucks %s: no LLM backend configured.\n"+
-		"FREE option — get a no-credit-card key at build.nvidia.com (~2 min), then:\n"+
-		"  %s=nemotron %s=nvapi-... bucks %s\n"+
-		"Or point at any OpenAI/Ollama-compatible endpoint with %s (and optionally %s, %s).\n",
+		"Run `bucks settings` to choose a backend and save its key securely.\n"+
+		"FREE option: NVIDIA Nemotron uses a no-credit-card key from build.nvidia.com.\n"+
+		"Advanced override: set %s plus %s, or point %s at a compatible endpoint (optionally %s).\n",
 		command,
-		envChatProvider, envChatKey, command,
-		envChatBaseURL, envChatKey, envChatModel)
+		envChatProvider, envChatKey, envChatBaseURL, envChatModel)
 }

@@ -12,12 +12,11 @@ import (
 	"bucks/internal/summary"
 )
 
-// runSummaryStdio is the production `bucks summary` entry point: it resolves the
-// backend from the SAME chat env vars (BUCKS_CHAT_BASEURL/_KEY/_MODEL) and writes a
-// plain-English account summary to stdout. With no backend it prints a clear message
-// and exits 0 — it never crashes for lack of an LLM.
-func runSummaryStdio() error {
-	return runSummary(os.Stdout, envSummaryBackends, demoSnapshot())
+// runSummaryStdio uses the shared saved-config-plus-environment backend resolver.
+func runSummaryStdio(configPath string) error {
+	return runSummary(os.Stdout, func() ([]analyst.Backend, error) {
+		return runtimeChatBackends(configPath, passphraseFromEnv())
+	}, demoSnapshot())
 }
 
 // snapshot is the account state a summary is built from: the Report plus the mode

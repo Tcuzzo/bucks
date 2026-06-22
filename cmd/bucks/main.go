@@ -54,6 +54,7 @@ var knownSubcommands = map[string]bool{
 	"summary":  true,
 	"research": true,
 	"read":     true,
+	"settings": true,
 	"logo":     true,
 	"mascot":   true,
 	"version":  true,
@@ -87,21 +88,42 @@ func run(args []string) error {
 	// the `--chat` flag below is the equivalent flag form. The backend is configured by
 	// env (BUCKS_CHAT_BASEURL / _KEY / _MODEL); with none it prints a clear message.
 	if len(args) > 0 && args[0] == "chat" {
-		return runChatStdio()
+		configPath, remaining, err := parseAICommandArgs("chat", args[1:])
+		if err != nil {
+			return err
+		}
+		if len(remaining) > 0 {
+			return fmt.Errorf("chat: unexpected arguments: %s", strings.Join(remaining, " "))
+		}
+		return runChatStdioFn(configPath)
+	}
+	if len(args) > 0 && args[0] == "settings" {
+		return runSettingsFn(args[1:])
 	}
 
 	// `bucks summary` — print a plain-English, GROUNDED account summary. Like `chat`
 	// it is a positional subcommand handled before flag parsing; it reuses the same
 	// BUCKS_CHAT_* env backend, and with none it prints a clear message (no crash).
 	if len(args) > 0 && args[0] == "summary" {
-		return runSummaryStdio()
+		configPath, remaining, err := parseAICommandArgs("summary", args[1:])
+		if err != nil {
+			return err
+		}
+		if len(remaining) > 0 {
+			return fmt.Errorf("summary: unexpected arguments: %s", strings.Join(remaining, " "))
+		}
+		return runSummaryStdioFn(configPath)
 	}
 
 	// `bucks research "<query>"` — read-only web research: search the web, read the
 	// top results, print a plain-English brief with its CITED sources. Like chat, it
 	// uses the BUCKS_CHAT_* env backend; with none it prints a clear message (no crash).
 	if len(args) > 0 && args[0] == "research" {
-		return runResearchStdio(strings.TrimSpace(strings.Join(args[1:], " ")))
+		configPath, remaining, err := parseAICommandArgs("research", args[1:])
+		if err != nil {
+			return err
+		}
+		return runResearchStdioFn(configPath, strings.TrimSpace(strings.Join(remaining, " ")))
 	}
 
 	// `bucks logo` (alias `bucks mascot`) — print the colored buck mascot to stdout and
@@ -114,11 +136,18 @@ func run(args []string) error {
 	// `bucks read <url>` — the direct "read this page and tell me plain-English" path
 	// (keyless, no search). Reads the URL read-only and summarizes it, citing the URL.
 	if len(args) > 0 && args[0] == "read" {
-		url := ""
-		if len(args) > 1 {
-			url = args[1]
+		configPath, remaining, err := parseAICommandArgs("read", args[1:])
+		if err != nil {
+			return err
 		}
-		return runReadStdio(url)
+		url := ""
+		if len(remaining) > 0 {
+			url = remaining[0]
+		}
+		if len(remaining) > 1 {
+			return fmt.Errorf("read: unexpected arguments: %s", strings.Join(remaining[1:], " "))
+		}
+		return runReadStdioFn(configPath, url)
 	}
 
 	// `bucks version` — print the build-stamped version + GOOS/GOARCH + go runtime
@@ -151,7 +180,7 @@ func run(args []string) error {
 	}
 
 	if *chatFlag {
-		return runChatStdio()
+		return runChatStdioFn(*configPath)
 	}
 
 	if *paperSmoke {
@@ -181,6 +210,23 @@ func run(args []string) error {
 	}
 	return runDashboardFn(*configPath)
 }
+
+func parseAICommandArgs(command string, args []string) (string, []string, error) {
+	fs := flag.NewFlagSet("bucks "+command, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", defaultConfigPath(), "path to the BUCKS config file")
+	if err := fs.Parse(args); err != nil {
+		return "", nil, err
+	}
+	return *configPath, fs.Args(), nil
+}
+
+var (
+	runChatStdioFn     = runChatStdio
+	runSummaryStdioFn  = runSummaryStdio
+	runResearchStdioFn = runResearchStdio
+	runReadStdioFn     = runReadStdio
+)
 
 // runWizardFn and runDashboardFn are the two boot paths, indirected behind package
 // vars so the dispatch in run() is unit-testable (a test swaps in spies). In
@@ -227,15 +273,18 @@ func runWizard(configPath string) error {
 // does NOT silently fall back to re-running the wizard (that would hide the real
 // problem). The live trade-loop feed lands in a later slice; this is the open-on-load.
 func runDashboard(configPath string) error {
-	// buildDashboardInteractive handles the keychain-less box: with no BUCKS_PASSPHRASE
-	// and a human attached, it prompts ONCE to unlock; under a daemon / piped input it
-	// does NOT prompt and returns the clear passphrase error handled below.
-	model, _, r, err := buildDashboardInteractive(configPath, passphraseFromEnv())
+	// Unlock once and retain the in-memory passphrase while the dashboard is open, so
+	// entering settings and returning does not ask the owner to unlock three times.
+	r, pass, err := loadSetupWithUnlock(configPath, passphraseFromEnv())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bucks: couldn't open your saved setup: %v\n", err)
 		fmt.Fprintln(os.Stderr, "Your config is at:", configPath)
 		fmt.Fprintln(os.Stderr, "If you set a passphrase, make sure BUCKS_PASSPHRASE matches it, then run `bucks` again.")
 		return err
+	}
+	model, _, _, err := buildDashboardFromConfig(configPath, pass)
+	if err != nil {
+		return fmt.Errorf("build dashboard: %w", err)
 	}
 	// Start the Telegram gateway in the background so the bot the owner configured during
 	// setup actually responds on THIS normal launch (not only under --daemon — the gap that
@@ -243,9 +292,39 @@ func runDashboard(configPath string) error {
 	// long-poll loop down cleanly when the dashboard exits. No token -> it's a no-op.
 	stop := startLaunchGateway(configPath, r)
 	defer stop()
-	p := tea.NewProgram(model)
-	_, err = p.Run()
-	return err
+	for {
+		p := tea.NewProgram(model)
+		final, runErr := p.Run()
+		if runErr != nil {
+			return runErr
+		}
+		restart, err := handleDashboardExit(final, func() error {
+			return runAISettingsForSetup(configPath, pass, r)
+		})
+		if err != nil {
+			return err
+		}
+		if !restart {
+			return nil
+		}
+		model, _, r, err = buildDashboardFromConfig(configPath, pass)
+		if err != nil {
+			return fmt.Errorf("reload dashboard after settings: %w", err)
+		}
+	}
+}
+
+// handleDashboardExit keeps the TUI-to-settings handoff independently testable. It
+// performs no I/O unless the final model explicitly requested settings.
+func handleDashboardExit(final tea.Model, openSettings func() error) (bool, error) {
+	dashboard, ok := final.(tui.DashboardModel)
+	if !ok || !dashboard.SettingsRequested() {
+		return false, nil
+	}
+	if err := openSettings(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // passphraseFromEnv reads the file-backend passphrase from BUCKS_PASSPHRASE. On a

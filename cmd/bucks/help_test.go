@@ -12,7 +12,7 @@ import (
 // never show up in the flag usage).
 var helpCommandNames = []string{
 	// subcommands
-	"chat", "summary", "research", "read", "version", "update", "logo", "mascot", "help",
+	"chat", "summary", "research", "read", "settings", "version", "update", "logo", "mascot", "help",
 	// dash / flag commands — the operator wants these listed too
 	"--daemon", "--paper-smoke", "--chat", "--config", "--live", "-h", "--help",
 }
@@ -66,7 +66,7 @@ func TestUnknownCommand_ErrorsWithHelp(t *testing.T) {
 func TestKnownSubcommandsMatchDispatch(t *testing.T) {
 	want := map[string]bool{
 		"chat": true, "summary": true, "research": true, "read": true,
-		"logo": true, "mascot": true, "version": true, "update": true, "help": true,
+		"settings": true, "logo": true, "mascot": true, "version": true, "update": true, "help": true,
 	}
 	if len(knownSubcommands) != len(want) {
 		t.Fatalf("knownSubcommands has %d entries, want %d: %v", len(knownSubcommands), len(want), knownSubcommands)

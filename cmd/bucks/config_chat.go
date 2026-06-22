@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	"bucks/internal/analyst"
 	"bucks/internal/chat"
+	"bucks/internal/secrets"
 	"bucks/internal/tui"
 )
 
@@ -126,23 +128,61 @@ func configChatBackend(r tui.SetupResult) (analyst.Backend, error) {
 // just their key.
 const cloudKeyBaseURL = "https://ollama.com"
 
-// configChatter builds the dashboard's Chatter from the SAVED setup, falling back to
-// the env-configured chatter (BUCKS_CHAT_*) when the config yields no backend — so
-// the existing env path keeps working. When NEITHER yields a backend it returns
-// (nil, nil): the dashboard opens read-only with the "configure a backend" hint and
-// NEVER blocks launch or fabricates a model.
+// configChatter builds the dashboard's Chatter. An explicit environment provider or
+// endpoint overrides the saved setup for compatibility; otherwise encrypted saved
+// settings are the default. When neither yields a backend it returns (nil, nil).
 func configChatter(r tui.SetupResult) (*chat.Chatter, error) {
+	if envChatConfigured() {
+		return envChatter()
+	}
 	backends, err := configChatBackends(r)
 	if err != nil {
 		return nil, err
 	}
 	if len(backends) == 0 {
-		// Config gave us nothing usable — honor the existing BUCKS_CHAT_* env path so a
-		// power user's env still works from the dashboard.
+		// A key by itself is not a complete environment override. Preserve the legacy
+		// fallback behavior for any unusual environment combination that can still
+		// construct a backend.
 		return envChatter()
 	}
 	persona := chat.NewPersona("")
 	// The full ordered list (e.g. codex primary + cloud-key fallback for "both") so a
 	// downgrade fails over and is recorded, never a silent single-backend swap.
+	return chat.NewChatter(persona, backends)
+}
+
+// envChatConfigured reports whether the user explicitly selected an environment
+// endpoint/provider. A key alone is incomplete and must not hide a working saved setup.
+func envChatConfigured() bool {
+	return strings.TrimSpace(os.Getenv(envChatProvider)) != "" || strings.TrimSpace(os.Getenv(envChatBaseURL)) != ""
+}
+
+// runtimeChatBackends is the shared resolver for standalone chat, summary, research,
+// and read commands. Explicit environment configuration wins for compatibility;
+// otherwise the encrypted saved setup is the default.
+func runtimeChatBackends(configPath, passphrase string, secretOpts ...secrets.Option) ([]analyst.Backend, error) {
+	if envChatConfigured() {
+		backend, err := envChatBackend()
+		if err != nil || backend == nil {
+			return nil, err
+		}
+		return []analyst.Backend{backend}, nil
+	}
+	if !configExists(configPath) {
+		return nil, nil
+	}
+	r, _, err := loadSetupWithUnlock(configPath, passphrase, secretOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return configChatBackends(r)
+}
+
+func runtimeChatter(configPath, passphrase string, secretOpts ...secrets.Option) (*chat.Chatter, error) {
+	backends, err := runtimeChatBackends(configPath, passphrase, secretOpts...)
+	if err != nil || len(backends) == 0 {
+		return nil, err
+	}
+	persona := chat.NewPersona(strings.TrimSpace(os.Getenv(envChatVoice)))
 	return chat.NewChatter(persona, backends)
 }

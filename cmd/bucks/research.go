@@ -11,20 +11,22 @@ import (
 	"bucks/internal/research"
 )
 
-// runResearchStdio is the production `bucks research "<query>"` entry point: it
-// resolves the backend from the SAME chat env vars (BUCKS_CHAT_*/PROVIDER) and the
-// default keyless search + read-only fetch client, searches the web, reads the top
-// results read-only, and prints a plain-English brief WITH its cited sources. With no
-// backend it prints a clear message and exits 0 — it never crashes for lack of an LLM.
-func runResearchStdio(query string) error {
-	return runResearch(os.Stdout, envResearchBackends, defaultSearchProvider, research.NewClient(), query)
+// runResearchStdio uses the shared saved-config-plus-environment backend resolver.
+func runResearchStdio(configPath, query string) error {
+	return runResearch(os.Stdout, runtimeResearchBackends(configPath), defaultSearchProvider, research.NewClient(), query)
 }
 
 // runReadStdio is the production `bucks read <url>` entry point: the direct
 // "read this page and tell me in plain English" path. Robust and keyless (no search
 // needed) — it fetches one URL read-only and summarizes it, citing the URL.
-func runReadStdio(url string) error {
-	return runRead(os.Stdout, envResearchBackends, research.NewClient(), url)
+func runReadStdio(configPath, url string) error {
+	return runRead(os.Stdout, runtimeResearchBackends(configPath), research.NewClient(), url)
+}
+
+func runtimeResearchBackends(configPath string) backendsFactory {
+	return func() ([]analyst.Backend, error) {
+		return runtimeChatBackends(configPath, passphraseFromEnv())
+	}
 }
 
 // envResearchBackends shares the SINGLE backend-selection seam (envChatBackend) with

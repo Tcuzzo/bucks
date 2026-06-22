@@ -106,6 +106,8 @@ type DashboardModel struct {
 	transcript []chatLine    // the rendered conversation, oldest first
 	input      string        // the line the owner is currently typing
 	thinking   bool          // true while awaiting a reply (the Say cmd is in flight)
+
+	settingsRequested bool // true when the outer runner should open AI settings
 }
 
 // NewDashboard constructs an empty, READ-ONLY dashboard (no snapshot, no chat). This
@@ -158,6 +160,12 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		// Settings work happens outside the Bubble Tea loop. Record intent and quit;
+		// the outer runner performs encrypted I/O, then rebuilds this model.
+		if msg.Type == tea.KeyCtrlS || (!m.chatEnabled() && msg.Type == tea.KeyRunes && strings.EqualFold(string(msg.Runes), "s")) {
+			m.settingsRequested = true
+			return m, tea.Quit
+		}
 		if m.chatEnabled() {
 			return m.updateChatKey(msg)
 		}
@@ -237,6 +245,9 @@ func (m DashboardModel) submitChat() (tea.Model, tea.Cmd) {
 
 // Snapshot returns the latest stored snapshot (for tests).
 func (m DashboardModel) CurrentSnapshot() (Snapshot, bool) { return m.snap, m.haveSnap }
+
+// SettingsRequested tells the outer dashboard runner to open the AI settings flow.
+func (m DashboardModel) SettingsRequested() bool { return m.settingsRequested }
 
 // View implements tea.Model. Pure render of the latest snapshot — no I/O, no
 // blocking — so it is safe every frame and fully assertable. All money is rendered
@@ -334,7 +345,7 @@ func (m DashboardModel) compactSummary() string {
 // chatHintLine is the one-line, plain-English nudge shown when no chat backend is
 // configured: it names the FREE Nemotron path first so a key-less owner has an
 // immediate way to turn chat on.
-const chatHintLine = "Chat is available once you set up an AI backend — the FREE NVIDIA Nemotron brain works with a no-credit-card key. See /help."
+const chatHintLine = "AI is not configured — press s to set it up, or run `bucks settings`. Free NVIDIA Nemotron works with a no-credit-card key."
 
 // chatView renders the conversation transcript, a thinking indicator while a reply is
 // in flight, and the input line — OR, when chat is disabled, a single hint line. It is
@@ -364,6 +375,7 @@ func (m DashboardModel) chatView() string {
 	}
 	// The input line with a block cursor so the owner sees where they're typing.
 	b.WriteString("  " + m.styles.prompt.Render("you") + " › " + m.input + "▌\n")
+	b.WriteString("  " + m.styles.hint.Render("[ctrl+s] AI settings") + "\n")
 	return b.String()
 }
 
