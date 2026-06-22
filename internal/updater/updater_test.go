@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -482,7 +483,11 @@ func TestOSReplacerAtomicReplace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != 0o755 {
+	// Windows does not expose Unix execute bits through os.FileMode; os.Chmod accepts
+	// 0755 but Stat reports the writable file as 0666. Keep the permission assertion
+	// on platforms where those bits are meaningful while preserving the replacement,
+	// content, and cleanup checks on Windows.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
 		t.Errorf("perm = %v, want 0755", info.Mode().Perm())
 	}
 	// No temp leftovers in the dir.
