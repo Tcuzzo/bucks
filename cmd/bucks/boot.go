@@ -2,9 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -210,7 +215,67 @@ func fractionOrFloor(capital orders.Decimal, frac, floor string) orders.Decimal 
 // config (e.g. .../bucks/bucks.yaml -> .../bucks/secrets.age). Used for the file
 // backend; the keychain backend ignores it.
 func secretsPathFor(configPath string) string {
+	if sameConfigPath(configPath, defaultConfigPath()) || filepath.Base(configPath) == "bucks.yaml" {
+		return legacySecretsPathFor(configPath)
+	}
+	name := filepath.Base(configPath)
+	if name == "" || name == "." {
+		name = "bucks"
+	}
+	return filepath.Join(filepath.Dir(configPath), name+".secrets.age")
+}
+
+func legacySecretsPathFor(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "secrets.age")
+}
+
+func secretsUserFor(configPath string) string {
+	if sameConfigPath(configPath, defaultConfigPath()) {
+		return ""
+	}
+	normalized := normalizedConfigPath(configPath)
+	sum := sha256.Sum256([]byte(normalized))
+	return "config-" + hex.EncodeToString(sum[:8])
+}
+
+func sameConfigPath(left, right string) bool {
+	return normalizedConfigPath(left) == normalizedConfigPath(right)
+}
+
+func normalizedConfigPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		path = abs
+	}
+	path = filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		path = strings.ToLower(path)
+	}
+	return path
+}
+
+func openPrimarySecretsStore(configPath, passphrase string, secretOpts ...secrets.Option) (secrets.Store, error) {
+	return secrets.Open(secretsUserFor(configPath), secretsPathFor(configPath), passphrase, secretOpts...)
+}
+
+// loadSecretsConfig reads the config-specific store. A non-default config created by
+// an older Bucks release may still use the legacy shared store; read it only when the
+// new namespace is absent and return the primary store so the next save migrates it.
+func loadSecretsConfig(configPath, passphrase string, secretOpts ...secrets.Option) (secrets.Store, secrets.Config, error) {
+	primary, err := openPrimarySecretsStore(configPath, passphrase, secretOpts...)
+	if err != nil {
+		return nil, secrets.Config{}, err
+	}
+	cfg, err := primary.Load()
+	if err == nil || !errors.Is(err, secrets.ErrNotFound) || secretsUserFor(configPath) == "" {
+		return primary, cfg, err
+	}
+	legacy, legacyErr := secrets.Open("", legacySecretsPathFor(configPath), passphrase, secretOpts...)
+	if legacyErr != nil {
+		return nil, secrets.Config{}, legacyErr
+	}
+	cfg, legacyErr = legacy.Load()
+	return primary, cfg, legacyErr
 }
 
 // SaveSetup persists a wizard SetupResult: the playbook plain to configPath, and the
@@ -236,7 +301,7 @@ func SaveSetup(r tui.SetupResult, configPath, passphrase string, secretOpts ...s
 	// any file lands on disk. Otherwise an orphan plain config would make configExists
 	// report a completed setup that has no secrets, and the next launch would try the
 	// dashboard and fail to load. (errors.Is still sees ErrPassphraseRequired through %w.)
-	store, err := secrets.Open("", secretsPathFor(configPath), passphrase, secretOpts...)
+	store, err := openPrimarySecretsStore(configPath, passphrase, secretOpts...)
 	if err != nil {
 		return fmt.Errorf("save setup: open secrets store: %w", err)
 	}
@@ -273,11 +338,7 @@ func LoadSetup(configPath, passphrase string, secretOpts ...secrets.Option) (tui
 	if err := pb.Validate(); err != nil {
 		return tui.SetupResult{}, fmt.Errorf("load setup: playbook invalid: %w", err)
 	}
-	store, err := secrets.Open("", secretsPathFor(configPath), passphrase, secretOpts...)
-	if err != nil {
-		return tui.SetupResult{}, fmt.Errorf("load setup: open secrets store: %w", err)
-	}
-	sc, err := store.Load()
+	_, sc, err := loadSecretsConfig(configPath, passphrase, secretOpts...)
 	if err != nil {
 		return tui.SetupResult{}, fmt.Errorf("load setup: decrypt secrets: %w", err)
 	}

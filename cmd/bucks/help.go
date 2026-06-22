@@ -24,6 +24,7 @@ Talk:
   bucks read <url>      fetch + summarize a web page
 
 Manage:
+  bucks settings        configure or change the encrypted AI backend
   bucks version         print the version + build info
   bucks update          update to the latest release (SHA-256 verified)
   bucks logo            show the brand mark   (alias: bucks mascot)

@@ -211,3 +211,38 @@ func TestDashboardChatStillRendersHealth(t *testing.T) {
 		t.Errorf("chat input line missing with chat on:\n%s", v)
 	}
 }
+
+func TestDashboardWithoutAIAdvertisesSettings(t *testing.T) {
+	m := NewDashboard()
+	m, _ = sendChatDash(t, m, SnapshotMsg{Snapshot: Snapshot{
+		Report: channel.Report{Equity: dec("10000"), RealizedPL: dec("0"), UnrealizedPL: dec("0")},
+	}})
+	view := strings.ToLower(m.View())
+	for _, want := range []string{"press s", "bucks settings"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing-AI dashboard does not contain %q:\n%s", want, m.View())
+		}
+	}
+}
+
+func TestDashboardSRequestsSettingsWhenChatUnavailable(t *testing.T) {
+	m := NewDashboard()
+	next, cmd := sendChatDash(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if cmd == nil {
+		t.Fatal("s should quit the dashboard into settings")
+	}
+	if !next.SettingsRequested() {
+		t.Fatal("s did not record a settings request")
+	}
+}
+
+func TestDashboardCtrlSRequestsSettingsWhileChatIsActive(t *testing.T) {
+	m := NewDashboardWithChat(&fakeResponder{reply: "ok"})
+	next, cmd := sendChatDash(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("ctrl+s should quit the dashboard into settings")
+	}
+	if !next.SettingsRequested() {
+		t.Fatal("ctrl+s did not record a settings request")
+	}
+}
