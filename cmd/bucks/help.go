@@ -24,6 +24,7 @@ Talk:
   bucks read <url>      fetch + summarize a web page
 
 Manage:
+  bucks doctor          check updates, Go deps, and vulnerabilities
   bucks version         print the version + build info
   bucks update          update to the latest release (SHA-256 verified)
   bucks logo            show the brand mark   (alias: bucks mascot)

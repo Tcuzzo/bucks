@@ -54,6 +54,7 @@ var knownSubcommands = map[string]bool{
 	"summary":  true,
 	"research": true,
 	"read":     true,
+	"doctor":   true,
 	"logo":     true,
 	"mascot":   true,
 	"version":  true,
@@ -119,6 +120,12 @@ func run(args []string) error {
 			url = args[1]
 		}
 		return runReadStdio(url)
+	}
+
+	// `bucks doctor` — inspect the installed/source checkout for update and
+	// vulnerability drift. `--check` explains the probes without running scans.
+	if len(args) > 0 && args[0] == "doctor" {
+		return runDoctor(args[1:])
 	}
 
 	// `bucks version` — print the build-stamped version + GOOS/GOARCH + go runtime
