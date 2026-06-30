@@ -35,6 +35,24 @@ func TestRunHelp_ListsEveryCommand(t *testing.T) {
 	}
 }
 
+func TestRunHelp_NamesFreeHostedChatProvider(t *testing.T) {
+	var out bytes.Buffer
+	if err := runHelp(&out); err != nil {
+		t.Fatalf("runHelp: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		envChatProvider,
+		"nemotron",
+		envChatKey,
+		"nvapi-",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("help text missing hosted chat guidance %q; output:\n%s", want, got)
+		}
+	}
+}
+
 // TestHelpDispatch_ExitsZero proves `bucks help`, `bucks --help`, and `bucks -h` all
 // route through run() to the help text and return nil (exit 0). It also asserts the
 // help printed contains each command name (the discoverability requirement).
