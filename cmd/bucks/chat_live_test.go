@@ -2,10 +2,15 @@
 
 // This live chat smoke test is NOT compiled by the default test suite — it only
 // builds under `-tags chat_live`. It makes REAL network calls to whatever
-// OpenAI/Ollama-compatible endpoint the chat env vars point at, so it must never run
+// OpenAI/Ollama-compatible provider the chat env vars point at, so it must never run
 // in the loop/CI default path (the no-live-network-in-default-tests rule).
 //
-// The operator runs it once a key + endpoint are provided (the SAME env the REPL uses):
+// The operator runs it once a key/provider are provided (the SAME env the REPL uses):
+//
+//	BUCKS_CHAT_PROVIDER=nemotron BUCKS_CHAT_KEY=nvapi-... \
+//	  go test -tags chat_live ./cmd/bucks/ -run TestLiveChat -v
+//
+// Or, for a custom Ollama-compatible endpoint:
 //
 //	BUCKS_CHAT_BASEURL=https://ollama.com \
 //	BUCKS_CHAT_KEY=... BUCKS_CHAT_MODEL=qwen3.5:cloud \
@@ -26,16 +31,17 @@ import (
 )
 
 func TestLiveChat(t *testing.T) {
-	baseURL := strings.TrimSpace(os.Getenv("BUCKS_CHAT_BASEURL"))
-	key := strings.TrimSpace(os.Getenv("BUCKS_CHAT_KEY"))
-	model := strings.TrimSpace(os.Getenv("BUCKS_CHAT_MODEL"))
-	if baseURL == "" {
-		t.Fatalf("set BUCKS_CHAT_BASEURL (and BUCKS_CHAT_KEY/_MODEL) to run the live chat test")
+	if strings.TrimSpace(os.Getenv(envChatVoice)) == "" {
+		t.Setenv(envChatVoice, "grounded and plain-spoken")
 	}
 
-	chatter, err := newChatterFromEnv(baseURL, key, model, "grounded and plain-spoken")
+	chatter, err := envChatter()
 	if err != nil {
 		t.Fatalf("build chatter: %v", err)
+	}
+	if chatter == nil {
+		t.Fatalf("set %s=nemotron %s=nvapi-... (or %s plus optional %s/%s) to run the live chat test",
+			envChatProvider, envChatKey, envChatBaseURL, envChatKey, envChatModel)
 	}
 
 	turns := []string{

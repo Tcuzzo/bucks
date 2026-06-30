@@ -169,7 +169,7 @@ func runChat(in io.Reader, out io.Writer, newChatter chatterFactory) error {
 // newChatterFromEnv builds a chat.Chatter over a single CloudKeyBackend pointed at the
 // configured endpoint. CloudKeyBackend is reused verbatim (the Ollama-style client) —
 // no new HTTP code. The persona carries the owner's voice (or the default). It remains
-// the explicit Ollama-path constructor used by the live chat smoke test.
+// the explicit Ollama-path constructor kept for direct constructor coverage.
 func newChatterFromEnv(baseURL, key, model, voice string) (*chat.Chatter, error) {
 	backend := analyst.NewCloudKeyBackend("chat-cloud", baseURL, key, model, nil)
 	persona := chat.NewPersona(voice)
