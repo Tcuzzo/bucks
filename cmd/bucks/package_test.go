@@ -114,14 +114,6 @@ func TestReleaseZipHasRequiredFilesAndNoSecrets(t *testing.T) {
 		"BUCKS_test/install.ps1": false,
 	}
 
-	// Secret SHAPES that must never appear in a shipped text file.
-	secretShapes := []*regexp.Regexp{
-		regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
-		regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-		regexp.MustCompile(`AGE-SECRET-KEY-1[0-9A-Z]+`),
-		regexp.MustCompile(`ghp_[A-Za-z0-9]{20,}`),
-	}
-
 	for _, f := range zr.File {
 		if _, ok := required[f.Name]; ok {
 			required[f.Name] = true
@@ -140,7 +132,7 @@ func TestReleaseZipHasRequiredFilesAndNoSecrets(t *testing.T) {
 			t.Fatalf("read zip entry %s: %v", f.Name, err)
 		}
 		rc.Close()
-		for _, re := range secretShapes {
+		for _, re := range releaseSecretShapes() {
 			if re.Match(buf.Bytes()) {
 				t.Errorf("SECRET-SHAPED content in shipped file %s (pattern %s)", f.Name, re.String())
 			}
