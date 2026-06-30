@@ -12,7 +12,7 @@ import (
 // never show up in the flag usage).
 var helpCommandNames = []string{
 	// subcommands
-	"chat", "summary", "research", "read", "version", "update", "logo", "mascot", "help",
+	"chat", "summary", "research", "read", "doctor", "version", "update", "logo", "mascot", "help",
 	// dash / flag commands — the operator wants these listed too
 	"--daemon", "--paper-smoke", "--chat", "--config", "--live", "-h", "--help",
 }
@@ -59,6 +59,14 @@ func TestUnknownCommand_ErrorsWithHelp(t *testing.T) {
 	}
 }
 
+// TestDoctorCheckDispatch_ExitsZero proves `bucks doctor --check` is wired as a
+// real positional subcommand and does not fall through to the unknown-command path.
+func TestDoctorCheckDispatch_ExitsZero(t *testing.T) {
+	if err := run([]string{"doctor", "--check"}); err != nil {
+		t.Fatalf("`bucks doctor --check` returned error (want nil/exit 0): %v", err)
+	}
+}
+
 // TestKnownSubcommandsMatchDispatch is a guard: every name in knownSubcommands must be
 // dispatched by run() WITHOUT being treated as an unknown command. We can't run the
 // interactive/network paths here, so we assert the guard set itself is the documented
@@ -66,7 +74,7 @@ func TestUnknownCommand_ErrorsWithHelp(t *testing.T) {
 func TestKnownSubcommandsMatchDispatch(t *testing.T) {
 	want := map[string]bool{
 		"chat": true, "summary": true, "research": true, "read": true,
-		"logo": true, "mascot": true, "version": true, "update": true, "help": true,
+		"doctor": true, "logo": true, "mascot": true, "version": true, "update": true, "help": true,
 	}
 	if len(knownSubcommands) != len(want) {
 		t.Fatalf("knownSubcommands has %d entries, want %d: %v", len(knownSubcommands), len(want), knownSubcommands)
