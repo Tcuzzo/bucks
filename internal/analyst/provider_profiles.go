@@ -104,3 +104,24 @@ func SupportedProviders() []string {
 	sort.Strings(out)
 	return out
 }
+
+// IsKnownProviderBaseURL reports whether baseURL matches one of BUCKS's hosted
+// OpenAI-compatible provider profile URLs. These hosted endpoints require a
+// per-user API key; custom/self-hosted endpoints may still intentionally omit one.
+func IsKnownProviderBaseURL(baseURL string) bool {
+	target := normalizeProviderBaseURL(baseURL)
+	if target == "" {
+		return false
+	}
+	for _, profile := range providerProfiles {
+		if normalizeProviderBaseURL(profile.BaseURL) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeProviderBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.ToLower(strings.TrimSpace(baseURL)), "/")
+	return strings.TrimSuffix(baseURL, "/v1")
+}

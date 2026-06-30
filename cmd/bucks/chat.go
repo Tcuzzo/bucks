@@ -86,6 +86,9 @@ func envChatBackend() (analyst.Backend, error) {
 		if baseURL == "" {
 			return nil, nil
 		}
+		if key == "" && analyst.IsKnownProviderBaseURL(baseURL) {
+			return nil, nil
+		}
 		return analyst.NewCloudKeyBackend("chat-cloud", baseURL, key, model, nil), nil
 	default:
 		// Any OpenAI-compatible provider (nemotron/nvidia/groq/cerebras/openrouter,
@@ -95,7 +98,7 @@ func envChatBackend() (analyst.Backend, error) {
 		if err != nil {
 			return nil, err
 		}
-		if key == "" && baseURL == "" {
+		if key == "" && (baseURL == "" || analyst.IsKnownProviderBaseURL(baseURL)) {
 			return nil, nil
 		}
 		if baseURL != "" {

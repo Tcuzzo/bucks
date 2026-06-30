@@ -249,6 +249,32 @@ func TestProviderProfileByName_AliasesAndUnknown(t *testing.T) {
 	}
 }
 
+// TestIsKnownProviderBaseURL pins the hosted-profile URL detector used by BUCKS
+// chat setup to distinguish no-key hosted providers from intentional local
+// OpenAI-compatible endpoints.
+func TestIsKnownProviderBaseURL(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://integrate.api.nvidia.com/v1",
+		"https://integrate.api.nvidia.com",
+		" https://integrate.api.nvidia.com/v1/ ",
+		"https://api.groq.com/openai/v1",
+		"https://api.groq.com/openai",
+		"https://api.cerebras.ai/v1",
+		"https://api.cerebras.ai",
+		"https://openrouter.ai/api/v1",
+		"https://openrouter.ai/api",
+	} {
+		if !IsKnownProviderBaseURL(baseURL) {
+			t.Errorf("IsKnownProviderBaseURL(%q) = false, want true", baseURL)
+		}
+	}
+	for _, baseURL := range []string{"", "http://localhost:8000/v1", "https://example.test/v1"} {
+		if IsKnownProviderBaseURL(baseURL) {
+			t.Errorf("IsKnownProviderBaseURL(%q) = true, want false", baseURL)
+		}
+	}
+}
+
 // TestNewOpenAICompatBackend_WiresProfile proves NewOpenAICompatBackend builds a
 // backend that targets the profile's base URL + default model (no override) and the
 // user's key — proven by driving it against an httptest server swapped in via the
