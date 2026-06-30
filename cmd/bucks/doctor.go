@@ -150,7 +150,7 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 	fmt.Fprintln(out, summarize(finalMods, finalVulns))
 
 	if len(finalVulns) > 0 {
-		os.Exit(1)
+		return fmt.Errorf("doctor: %d vulnerabilities found", len(finalVulns))
 	}
 	return nil
 }
