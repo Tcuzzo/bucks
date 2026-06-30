@@ -95,6 +95,9 @@ func envChatBackend() (analyst.Backend, error) {
 		if err != nil {
 			return nil, err
 		}
+		if key == "" && baseURL == "" {
+			return nil, nil
+		}
 		if baseURL != "" {
 			// An explicit base URL overrides the profile (advanced/self-hosted).
 			profile.BaseURL = baseURL

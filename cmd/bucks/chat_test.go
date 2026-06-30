@@ -138,6 +138,50 @@ func TestEnvChatBackend_NemotronBuildsOpenAICompat(t *testing.T) {
 	}
 }
 
+// TestEnvChatBackend_NemotronWithoutKeyIsNoBackend proves a named
+// OpenAI-compatible provider with no user key does not build an unauthenticated
+// cloud backend that fails later. It should fall through to the same clear
+// no-backend guidance as an unconfigured chat.
+func TestEnvChatBackend_NemotronWithoutKeyIsNoBackend(t *testing.T) {
+	for _, provider := range []string{"nemotron", "openai", "nvidia", "groq", "cerebras", "openrouter"} {
+		t.Run(provider, func(t *testing.T) {
+			t.Setenv(envChatProvider, provider)
+			t.Setenv(envChatBaseURL, "")
+			t.Setenv(envChatModel, "")
+			t.Setenv(envChatKey, "")
+
+			backend, err := envChatBackend()
+			if err != nil {
+				t.Fatalf("envChatBackend: %v", err)
+			}
+			if backend != nil {
+				t.Fatalf("%s provider without key/base URL must yield no backend, got %T", provider, backend)
+			}
+		})
+	}
+}
+
+// TestEnvChatBackend_CustomCompatEndpointMayOmitKey preserves the advanced/local
+// OpenAI-compatible path: an explicit base URL is enough to intentionally use a
+// no-auth endpoint.
+func TestEnvChatBackend_CustomCompatEndpointMayOmitKey(t *testing.T) {
+	t.Setenv(envChatProvider, "nemotron")
+	t.Setenv(envChatBaseURL, "http://localhost:8000/v1")
+	t.Setenv(envChatModel, "local-model")
+	t.Setenv(envChatKey, "")
+
+	backend, err := envChatBackend()
+	if err != nil {
+		t.Fatalf("envChatBackend: %v", err)
+	}
+	if backend == nil {
+		t.Fatal("custom OpenAI-compatible base URL should build a backend even without a key")
+	}
+	if _, ok := backend.(*analyst.OpenAICompatBackend); !ok {
+		t.Fatalf("backend type = %T, want *analyst.OpenAICompatBackend", backend)
+	}
+}
+
 // TestEnvChatBackend_DefaultIsOllamaUnchanged proves the existing default path is
 // untouched: with no provider set and a base URL present, the backend is the
 // Ollama-style CloudKeyBackend; with no provider AND no base URL, there is no
@@ -172,5 +216,13 @@ func TestEnvChatBackend_UnknownProviderErrors(t *testing.T) {
 	t.Setenv(envChatKey, "k")
 	if _, err := envChatBackend(); err == nil {
 		t.Fatal("unknown provider should error")
+	}
+}
+
+func TestEnvChatBackend_UnknownProviderErrorsWithoutKey(t *testing.T) {
+	t.Setenv(envChatProvider, "totally-bogus")
+	t.Setenv(envChatKey, "")
+	if _, err := envChatBackend(); err == nil {
+		t.Fatal("unknown provider should error before no-key fallback")
 	}
 }
