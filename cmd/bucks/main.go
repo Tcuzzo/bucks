@@ -150,7 +150,7 @@ func run(args []string) error {
 	fs.Usage = func() { _ = runHelp(os.Stderr) }
 	daemon := fs.Bool("daemon", false, "run headless (no TUI) under a service manager")
 	paperSmoke := fs.Bool("paper-smoke", false, "boot the saved config into a paper trader and place one in-band paper trade (offline acceptance), then exit")
-	chatFlag := fs.Bool("chat", false, "open the conversational REPL — talk to BUCKS like a person (backend via BUCKS_CHAT_BASEURL/_KEY/_MODEL)")
+	chatFlag := fs.Bool("chat", false, "open the conversational REPL — talk to BUCKS like a person (backend via BUCKS_CHAT_PROVIDER or BUCKS_CHAT_BASEURL/_KEY/_MODEL)")
 	live := fs.Bool("live", false, "arm REAL-MONEY live trading this session (default: paper / monitor-only)")
 	configPath := fs.String("config", defaultConfigPath(), "path to the BUCKS config file")
 	if err := fs.Parse(args); err != nil {

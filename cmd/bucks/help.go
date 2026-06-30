@@ -18,7 +18,7 @@ Run:
   bucks --paper-smoke   boot the saved config + place one in-band paper trade, then exit
 
 Talk:
-  bucks chat            talk to BUCKS like a person
+  bucks chat            talk to BUCKS like a person (BUCKS_CHAT_PROVIDER=nemotron BUCKS_CHAT_KEY=nvapi-...)
   bucks summary         plain-English summary of your positions / P&L
   bucks research "<q>"  read-only web research on a topic
   bucks read <url>      fetch + summarize a web page
@@ -32,7 +32,7 @@ Manage:
 
 Flags:
   --config <path>       use a specific config file
-  --chat                open the chat REPL (same as: bucks chat)
+  --chat                open the chat REPL (same as: bucks chat; BUCKS_CHAT_PROVIDER supported)
   --daemon              run headless, no TUI
   --live                arm REAL-MONEY trading this session (default: paper / monitor-only)
   --paper-smoke         offline paper-trade acceptance, then exit
