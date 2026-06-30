@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -95,6 +96,28 @@ func TestRunChat_DispatchedFromRun(t *testing.T) {
 	// Flag form.
 	if err := run([]string{"--chat"}); err != nil {
 		t.Fatalf("`bucks --chat` dispatch errored: %v", err)
+	}
+}
+
+func TestLiveChatSmokeUsesSharedEnvChatterSeam(t *testing.T) {
+	src, err := os.ReadFile("chat_live_test.go")
+	if err != nil {
+		t.Fatalf("read live chat smoke source: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "envChatter()") {
+		t.Fatalf("live chat smoke must build through envChatter so it exercises %s; source:\n%s", envChatProvider, text)
+	}
+	if strings.Contains(text, "newChatterFromEnv(") {
+		t.Fatalf("live chat smoke bypasses provider routing via newChatterFromEnv; source:\n%s", text)
+	}
+	for _, want := range []string{
+		"BUCKS_CHAT_PROVIDER=nemotron",
+		"BUCKS_CHAT_KEY=nvapi-",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("live chat smoke example missing %q; source:\n%s", want, text)
+		}
 	}
 }
 
