@@ -1,8 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"bucks/internal/updater"
 )
 
 // ---------------------------------------------------------------------------
@@ -271,5 +280,83 @@ func TestDoctorFixCommand_Binary(t *testing.T) {
 	}
 	if len(cmd) < 2 || cmd[1] != "update" {
 		t.Errorf("binary fix command should be [bucks update]; got %v", cmd)
+	}
+}
+
+func TestRunDoctorCore_ReturnsErrorForVulnerabilitiesWithoutProcessExit(t *testing.T) {
+	if os.Getenv("BUCKS_DOCTOR_VULN_HELPER") == "1" {
+		runDoctorVulnerabilityHelper(t)
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunDoctorCore_ReturnsErrorForVulnerabilitiesWithoutProcessExit")
+	cmd.Env = append(os.Environ(), "BUCKS_DOCTOR_VULN_HELPER=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("doctor helper exited instead of returning an error: %v\n%s", err, out)
+	}
+}
+
+func runDoctorVulnerabilityHelper(t *testing.T) {
+	t.Helper()
+
+	tmp := t.TempDir()
+	goMod := []byte("module example.com/bucks-doctor-test\n\ngo 1.24\n")
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), goMod, 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp module: %v", err)
+	}
+
+	binDir := t.TempDir()
+	fakeGo := filepath.Join(binDir, "go")
+	goScript := `#!/bin/sh
+case "$1" in
+  version)
+    printf '%s\n' 'go version go1.24.0 linux/amd64'
+    ;;
+  list)
+    printf '%s\n' '{"Path":"example.com/bucks-doctor-test","Version":"v0.0.0"}'
+    ;;
+  *)
+    printf 'unexpected fake go command: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeGo, []byte(goScript), 0o755); err != nil {
+		t.Fatalf("write fake go: %v", err)
+	}
+	fakeGovulncheck := filepath.Join(binDir, "govulncheck")
+	script := `#!/bin/sh
+printf '%s\n' '{"message":{"finding":{"osv":"GO-2026-9999"}}}'
+exit 3
+`
+	if err := os.WriteFile(fakeGovulncheck, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake govulncheck: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tag_name":"v1.0.0","assets":[]}`)
+	}))
+	defer srv.Close()
+	u := updater.New(
+		updater.WithAPIBase(srv.URL),
+		updater.WithHTTPClient(srv.Client()),
+		updater.WithVersion("v1.0.0"),
+	)
+
+	var out bytes.Buffer
+	err := runDoctorCore(t.Context(), u, &out, false, false)
+	if err == nil {
+		t.Fatalf("doctor must return an error when vulnerabilities are found; output:\n%s", out.String())
+	}
+	if !strings.Contains(err.Error(), "vulnerabilities") {
+		t.Fatalf("doctor error should mention vulnerabilities, got: %v", err)
+	}
+	if !strings.Contains(out.String(), "GO-2026-9999") {
+		t.Fatalf("doctor output should include the vulnerability id, got:\n%s", out.String())
 	}
 }
