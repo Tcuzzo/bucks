@@ -95,7 +95,7 @@ func run(args []string) error {
 	// it is a positional subcommand handled before flag parsing; it reuses the same
 	// BUCKS_CHAT_* env backend, and with none it prints a clear message (no crash).
 	if len(args) > 0 && args[0] == "summary" {
-		return runSummaryStdio()
+		return runSummaryStdio(args[1:])
 	}
 
 	// `bucks research "<query>"` — read-only web research: search the web, read the
