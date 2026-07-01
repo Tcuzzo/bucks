@@ -263,6 +263,10 @@ func findAsset(assets []Asset, want string) (Asset, bool) {
 type Options struct {
 	// Force performs the install even if the latest is not newer (a reinstall).
 	Force bool
+	// ExpectedTag, when set, is the release tag the caller already showed the user.
+	// Update aborts if the rechecked latest tag differs, so consent stays tied to
+	// the artifact being installed.
+	ExpectedTag string
 }
 
 // Result reports the outcome of an Update.
@@ -282,6 +286,9 @@ func (u *Updater) Update(ctx context.Context, opts Options) (Result, error) {
 	rel, err := u.CheckLatest(ctx)
 	if err != nil {
 		return Result{}, err
+	}
+	if opts.ExpectedTag != "" && rel.Tag != opts.ExpectedTag {
+		return Result{}, fmt.Errorf("updater: latest release changed from %s to %s; aborting", opts.ExpectedTag, rel.Tag)
 	}
 	res := Result{
 		OldVersion: describeCurrent(u.version),
