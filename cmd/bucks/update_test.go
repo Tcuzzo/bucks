@@ -218,6 +218,74 @@ func TestRunUpdateYesInstalls(t *testing.T) {
 	}
 }
 
+// TestRunUpdateAbortsIfLatestChangesAfterPrompt proves the updater installs only the
+// release tag the operator saw and approved. If GitHub's latest tag changes between
+// the prompt and the download path, consent no longer matches the artifact.
+func TestRunUpdateAbortsIfLatestChangesAfterPrompt(t *testing.T) {
+	binName := "bucks"
+	if runtime.GOOS == "windows" {
+		binName = "bucks.exe"
+	}
+	v2Bin := []byte("approved-v2")
+	v2Zip := buildZip(t, binName, v2Bin)
+	v3Bin := []byte("unapproved-v3")
+	v3Zip := buildZip(t, binName, v3Bin)
+	zipName := updater.AssetName(runtime.GOOS, runtime.GOARCH)
+	v2Sums := sha256Hex(v2Zip) + "  " + zipName + "\n"
+	v3Sums := sha256Hex(v3Zip) + "  " + zipName + "\n"
+
+	var latestHits int
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	mux.HandleFunc("/repos/Tcuzzo/bucks/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		latestHits++
+		tag := "v2.0.0"
+		prefix := "v2"
+		if latestHits > 1 {
+			tag = "v3.0.0"
+			prefix = "v3"
+		}
+		fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":%q,"browser_download_url":%q},{"name":"SHA256SUMS","browser_download_url":%q}]}`,
+			tag, zipName, srv.URL+"/dl/"+prefix+"/zip", srv.URL+"/dl/"+prefix+"/sums")
+	})
+	mux.HandleFunc("/dl/v2/zip", func(w http.ResponseWriter, r *http.Request) { w.Write(v2Zip) })
+	mux.HandleFunc("/dl/v2/sums", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(v2Sums)) })
+	mux.HandleFunc("/dl/v3/zip", func(w http.ResponseWriter, r *http.Request) { w.Write(v3Zip) })
+	mux.HandleFunc("/dl/v3/sums", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(v3Sums)) })
+
+	tmp := filepath.Join(t.TempDir(), "bucks")
+	if err := os.WriteFile(tmp, []byte("old"), 0o755); err != nil {
+		t.Fatalf("seed old binary: %v", err)
+	}
+	repl := &fakeReplacer{path: tmp}
+	u := updater.New(
+		updater.WithAPIBase(srv.URL),
+		updater.WithHTTPClient(srv.Client()),
+		updater.WithVersion("v1.0.0"),
+		updater.WithReplacer(repl),
+	)
+
+	var out bytes.Buffer
+	err := runUpdate(context.Background(), u, strings.NewReader("y\n"), &out, updateFlags{})
+	if err == nil {
+		t.Fatalf("expected update to abort when latest changed; output: %q", out.String())
+	}
+	if repl.seen {
+		t.Fatal("must not install a release different from the approved prompt tag")
+	}
+	got, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(got) != "old" {
+		t.Fatalf("target changed despite tag drift: %q", got)
+	}
+	if !strings.Contains(out.String(), "changed") {
+		t.Errorf("expected clear tag-change error, got: %q", out.String())
+	}
+}
+
 // TestRunUpdateNetworkErrorClean proves a network failure prints a clear message and
 // returns an error (non-zero exit) — no crash.
 func TestRunUpdateNetworkErrorClean(t *testing.T) {

@@ -100,7 +100,7 @@ func runUpdate(ctx context.Context, u *updater.Updater, in io.Reader, out io.Wri
 	}
 
 	fmt.Fprintln(out, "Downloading and verifying (SHA-256)...")
-	res, err := u.Update(ctx, updater.Options{Force: fl.force})
+	res, err := u.Update(ctx, updater.Options{Force: fl.force, ExpectedTag: rel.Tag})
 	if err != nil {
 		fmt.Fprintf(out, "Update failed: %v\n", err)
 		return err
