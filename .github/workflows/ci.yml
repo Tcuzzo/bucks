@@ -16,6 +16,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Secret scan
+        run: bash dist/secret_scan.sh .
+
       - name: Build (static, no cgo)
         run: CGO_ENABLED=0 go build ./...
 
