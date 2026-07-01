@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -151,4 +152,129 @@ func TestReleaseZipHasRequiredFilesAndNoSecrets(t *testing.T) {
 			t.Errorf("release zip is MISSING required file: %s", name)
 		}
 	}
+}
+
+func releaseSecretShapes() []*regexp.Regexp {
+	return []*regexp.Regexp{
+		regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
+		regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+		regexp.MustCompile(`AGE-SECRET-KEY-1[0-9A-Z]+`),
+		regexp.MustCompile(`ghp_[A-Za-z0-9]{20,}`),
+		regexp.MustCompile(`nvapi-[A-Za-z0-9_-]{16,}`),
+		regexp.MustCompile(`sk-[A-Za-z0-9_-]{20,}`),
+	}
+}
+
+func TestReleaseSecretShapesCatchHostedLLMKeys(t *testing.T) {
+	samples := []string{
+		"BUCKS_CHAT_KEY=nvapi-abcdEFGH1234567890hostedLLMKey",
+		"OPENAI_API_KEY=sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+		"OPENAI_API_KEY=sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+	}
+
+	for _, sample := range samples {
+		matched := false
+		for _, re := range releaseSecretShapes() {
+			if re.MatchString(sample) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("release secret shapes did not catch hosted LLM key sample %q", sample)
+		}
+	}
+}
+
+func TestSecretScanScriptRejectsHostedLLMKeys(t *testing.T) {
+	root := repoRoot(t)
+	tmp := t.TempDir()
+	leakPath := filepath.Join(tmp, "leaked-env.txt")
+	leak := strings.Join([]string{
+		"BUCKS_CHAT_KEY=nvapi-abcdEFGH1234567890hostedLLMKey",
+		"OPENAI_API_KEY=sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+		"OPENAI_API_KEY=sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+	}, "\n")
+	if err := os.WriteFile(leakPath, []byte(leak), 0o600); err != nil {
+		t.Fatalf("write leaked fixture: %v", err)
+	}
+
+	scan := exec.Command("bash", filepath.Join(root, "dist", "secret_scan.sh"), tmp)
+	out, err := scan.CombinedOutput()
+	if err == nil {
+		t.Fatalf("secret_scan.sh accepted hosted LLM key-shaped content; output:\n%s", out)
+	}
+	text := string(out)
+	for _, want := range []string{"POSSIBLE SECRET", "nvapi-", "sk-proj-", "sk-AbCdEf"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("secret_scan.sh output missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
+func TestSecretScanScriptAllowsHostedLLMPlaceholders(t *testing.T) {
+	root := repoRoot(t)
+	tmp := t.TempDir()
+	placeholderPath := filepath.Join(tmp, "docs.txt")
+	placeholder := strings.Join([]string{
+		"Paste a free nvapi-... key from build.nvidia.com.",
+		"Set OPENAI_API_KEY=sk-... when using an OpenAI-compatible provider.",
+	}, "\n")
+	if err := os.WriteFile(placeholderPath, []byte(placeholder), 0o600); err != nil {
+		t.Fatalf("write placeholder fixture: %v", err)
+	}
+
+	scan := exec.Command("bash", filepath.Join(root, "dist", "secret_scan.sh"), tmp)
+	out, err := scan.CombinedOutput()
+	if err != nil {
+		t.Fatalf("secret_scan.sh rejected hosted LLM placeholders: %v\n%s", err, out)
+	}
+}
+
+func TestGitHubWorkflowsRunSecretScan(t *testing.T) {
+	root := repoRoot(t)
+	workflows := map[string]struct {
+		mustPrecede string
+	}{
+		".github/workflows/ci.yml": {},
+		".github/workflows/release.yml": {
+			mustPrecede: "gh release create",
+		},
+	}
+
+	for workflow, rule := range workflows {
+		t.Run(workflow, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(root, workflow))
+			if err != nil {
+				t.Fatalf("read workflow: %v", err)
+			}
+			text := uncommentedWorkflowText(string(data))
+			scanIndex := strings.Index(text, "bash dist/secret_scan.sh .")
+			if scanIndex < 0 {
+				t.Fatalf("%s does not run dist/secret_scan.sh against the repo", workflow)
+			}
+			if rule.mustPrecede == "" {
+				return
+			}
+			laterIndex := strings.Index(text, rule.mustPrecede)
+			if laterIndex < 0 {
+				t.Fatalf("%s missing expected later command %q", workflow, rule.mustPrecede)
+			}
+			if scanIndex > laterIndex {
+				t.Fatalf("%s runs secret scan after %q; release assets must be scanned before publish", workflow, rule.mustPrecede)
+			}
+		})
+	}
+}
+
+func uncommentedWorkflowText(text string) string {
+	var active strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		active.WriteString(line)
+		active.WriteByte('\n')
+	}
+	return active.String()
 }
