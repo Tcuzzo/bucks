@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -293,6 +294,68 @@ func TestTick_RiskRejected_NotPlaced(t *testing.T) {
 	}
 	if rec.RiskInfo == "" {
 		t.Fatalf("risk rejection reason must be recorded")
+	}
+}
+
+func TestTick_DailyLossBreachBlocksTradeAlertsOnceAndClearsNextDay(t *testing.T) {
+	f := newFixture(t, func(c *TraderConfig) {
+		c.Engine = risk.NewEngine(risk.Config{
+			MaxRiskPerTradePct:  dec(t, "0.02"),
+			MaxDailyLossPct:     dec(t, "0.03"),
+			MaxConcentrationPct: dec(t, "1"),
+			MaxOpenPositions:    100,
+			RequireStop:         true,
+		})
+	})
+	ctx := context.Background()
+	p := longProposal(t, "AAPL", "1", "100", "99", "1000")
+	breached := emptyPortfolio(t, "1000")
+	breached.RealizedPnLToday = dec(t, "-30")
+
+	rec, err := f.trader.Tick(ctx, TradeDecision{HasProposal: true, Proposal: p, Reason: "entry after loss", Seq: 12}, breached, dec(t, "1000"))
+	if err != nil {
+		t.Fatalf("breach tick: %v", err)
+	}
+	if rec.Outcome != OutcomeHalted {
+		t.Fatalf("daily-loss breach must halt this tick, got %s (%s)", rec.Outcome, rec.RiskInfo)
+	}
+	if len(f.broker.Placed()) != 0 {
+		t.Fatalf("daily-loss breach must block placement, placed=%v", f.broker.Placed())
+	}
+	if halted(f.ks) {
+		t.Fatalf("daily-loss breaker must not trip the durable kill switch")
+	}
+	alerts := f.ch.Alerts()
+	if len(alerts) != 1 || alerts[0].Level != channel.AlertCritical ||
+		!strings.Contains(alerts[0].Text, "Daily-loss limit hit") {
+		t.Fatalf("daily-loss breach must send one loud alert, alerts=%+v", alerts)
+	}
+
+	rec, err = f.trader.Tick(ctx, TradeDecision{HasProposal: true, Proposal: p, Reason: "still breached", Seq: 13}, breached, dec(t, "1000"))
+	if err != nil {
+		t.Fatalf("second breach tick: %v", err)
+	}
+	if rec.Outcome != OutcomeHalted {
+		t.Fatalf("daily-loss breach must keep blocking while breached, got %s", rec.Outcome)
+	}
+	if got := len(f.ch.Alerts()); got != 1 {
+		t.Fatalf("daily-loss breach must alert only on transition, got %d alerts", got)
+	}
+
+	f.clk.advance(24 * time.Hour)
+	cleared := emptyPortfolio(t, "1000")
+	rec, err = f.trader.Tick(ctx, TradeDecision{HasProposal: true, Proposal: p, Reason: "new UTC day", Seq: 14}, cleared, dec(t, "1000"))
+	if err != nil {
+		t.Fatalf("next-day tick: %v", err)
+	}
+	if rec.Outcome != OutcomeAutoPlaced {
+		t.Fatalf("daily-loss breaker should clear when today's realized resets, got %s (%s)", rec.Outcome, rec.RiskInfo)
+	}
+	if len(f.broker.Placed()) != 1 {
+		t.Fatalf("next-day cleared breaker should allow placement, placed=%v", f.broker.Placed())
+	}
+	if halted(f.ks) {
+		t.Fatalf("daily-loss auto-clear must not require kill-switch re-arm")
 	}
 }
 

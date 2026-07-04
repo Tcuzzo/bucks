@@ -40,7 +40,7 @@ func TestAccountSourceReadsRealEquityAndHolds(t *testing.T) {
 	b := mock.New()
 	b.SetAccount(brokers.Account{Equity: dec(t, "12345"), Cash: dec(t, "12345"), BuyingPower: dec(t, "12345")})
 
-	src := newAccountSource(b, monitorOnlyDecider(), oneTick())
+	src := newAccountSource(b, monitorOnlyDecider(), oneTick(), nil, nil, nil)
 	in, ok := src.Next(context.Background())
 	if !ok {
 		t.Fatal("source should yield one tick")
@@ -105,7 +105,7 @@ func TestLiveLoopPlacesInjectedDecision(t *testing.T) {
 		}
 	})
 
-	src := newAccountSource(b, decider, oneTick())
+	src := newAccountSource(b, decider, oneTick(), nil, nil, nil)
 	if err := trader.Run(context.Background(), src); err != nil {
 		t.Fatalf("trader.Run: %v", err)
 	}

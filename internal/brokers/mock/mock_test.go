@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"bucks/internal/brokers"
 	"bucks/internal/orders"
@@ -167,6 +168,28 @@ func TestGetOrder_Unknown(t *testing.T) {
 	m := New()
 	if _, err := m.GetOrder(ctx, "MISSING0000000000000000000000000"); !errors.Is(err, brokers.ErrOrderNotFound) {
 		t.Fatalf("get unknown: got %v, want ErrOrderNotFound", err)
+	}
+}
+
+func TestFillsSince_ReturnsSeededFillsAfterCursor(t *testing.T) {
+	ctx := context.Background()
+	m := New()
+	cursor := time.Date(2026, 7, 4, 14, 0, 0, 0, time.UTC)
+	m.SetFills([]brokers.Fill{
+		{ID: "before", Symbol: "AAPL", Side: orders.SideBuy, Qty: dec(t, "10"), Px: dec(t, "100"), At: cursor.Add(-time.Second)},
+		{ID: "after-2", Symbol: "MSFT", Side: orders.SideSell, Qty: dec(t, "2"), Px: dec(t, "50"), At: cursor.Add(2 * time.Second)},
+		{ID: "after-1", Symbol: "AAPL", Side: orders.SideSell, Qty: dec(t, "1"), Px: dec(t, "90"), At: cursor.Add(time.Second)},
+	})
+
+	got, err := m.FillsSince(ctx, cursor)
+	if err != nil {
+		t.Fatalf("fills since: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("fills after cursor = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].ID != "after-1" || got[1].ID != "after-2" {
+		t.Fatalf("fills not filtered and sorted by time: %+v", got)
 	}
 }
 

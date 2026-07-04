@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"bucks/internal/channel"
 	"bucks/internal/harness"
 	"bucks/internal/orders"
 	"bucks/internal/risk"
+	"bucks/internal/tui"
 )
 
 // TestBuildLiveTraderPaperRuns proves a PAPER setup builds a running Trader (no real-money
@@ -152,5 +155,80 @@ func TestLiveLoopHonorsSharedKillSwitchHalt(t *testing.T) {
 	}
 	if rec.Outcome != harness.OutcomeHalted {
 		t.Errorf("a tick while HALTED must be OutcomeHalted (no trade), got %s", rec.Outcome)
+	}
+}
+
+func TestStartTradeLoopAlertsWhenBrokerHasNoFillReader(t *testing.T) {
+	oldCoinbaseBaseURL := coinbaseBaseURL
+	coinbaseBaseURL = "http://127.0.0.1:1"
+	defer func() { coinbaseBaseURL = oldCoinbaseBaseURL }()
+	oldInterval := tradeLoopInterval
+	tradeLoopInterval = time.Hour
+	defer func() { tradeLoopInterval = oldInterval }()
+
+	r := validSetupResult(t)
+	r.LLM = tui.LLMCloudKey
+	r.LLMKey = ""
+	r.Brokers = []tui.BrokerCreds{{
+		Kind:   tui.BrokerCoinbase,
+		Key:    "coinbase-key",
+		Secret: "coinbase-secret",
+	}}
+	ch := channel.NewMockChannel()
+	var logs []string
+	stop := startTradeLoop(filepath.Join(t.TempDir(), "bucks.yaml"), r, ch, false, nil, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	stop()
+
+	alerts := ch.Alerts()
+	if len(alerts) == 0 {
+		t.Fatalf("broker without FillReader must surface a loud operator alert")
+	}
+	if alerts[0].Level != channel.AlertCritical ||
+		!strings.Contains(alerts[0].Text, "Daily-loss breaker INACTIVE") ||
+		!strings.Contains(alerts[0].Text, "coinbase") {
+		t.Fatalf("unexpected inactive-breaker alert: %+v", alerts[0])
+	}
+	var sawInactiveLog bool
+	for _, line := range logs {
+		if strings.Contains(line, "Daily-loss breaker INACTIVE") && strings.Contains(line, "coinbase") {
+			sawInactiveLog = true
+		}
+		if strings.Contains(line, "not started") {
+			t.Fatalf("non-FillReader broker must not block trading; logs=%v", logs)
+		}
+	}
+	if !sawInactiveLog {
+		t.Fatalf("inactive daily-loss breaker must be logged loudly; logs=%v", logs)
+	}
+}
+
+// The first-boot cold-start notice must reach the operator LOUDLY (critical alert +
+// log), never a silent debug line.
+func TestSurfaceFirstBootColdStart_AlertsOperatorLoudly(t *testing.T) {
+	ch := channel.NewMockChannel()
+	var logs []string
+	surfaceFirstBootColdStart(context.Background(), ch, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}, time.Date(2026, 7, 4, 15, 0, 0, 0, time.UTC))
+
+	alerts := ch.Alerts()
+	if len(alerts) == 0 {
+		t.Fatalf("first-boot cold start must surface a loud operator alert")
+	}
+	if alerts[0].Level != channel.AlertCritical ||
+		!strings.Contains(alerts[0].Text, "budget") ||
+		!strings.Contains(alerts[0].Text, "starts fresh") {
+		t.Fatalf("unexpected cold-start alert: %+v", alerts[0])
+	}
+	var sawLog bool
+	for _, line := range logs {
+		if strings.Contains(line, "starts fresh") {
+			sawLog = true
+		}
+	}
+	if !sawLog {
+		t.Fatalf("cold-start notice must also log; logs=%v", logs)
 	}
 }

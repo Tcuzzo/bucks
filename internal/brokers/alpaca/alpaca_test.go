@@ -7,8 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	sdk "github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
+	"github.com/shopspring/decimal"
 
 	"bucks/internal/brokers"
 	"bucks/internal/orders"
@@ -23,6 +28,15 @@ func dec(t *testing.T, s string) orders.Decimal {
 	return d
 }
 
+func sdkDec(t *testing.T, s string) decimal.Decimal {
+	t.Helper()
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		t.Fatalf("parse sdk decimal %q: %v", s, err)
+	}
+	return d
+}
+
 // fakeAlpaca is an httptest.Server mirroring the Alpaca Trading + Market Data
 // JSON shapes. NO live network: the adapter's BaseURL/DataBaseURL point here.
 type fakeAlpaca struct {
@@ -32,11 +46,13 @@ type fakeAlpaca struct {
 	canceledIDs    []string
 
 	// ordersByClOrdID models the venue's order book keyed by client_order_id.
-	ordersByClOrdID map[string]map[string]any
-	positions       []map[string]any
-	account         map[string]any
-	quote           map[string]any
-	trade           map[string]any
+	ordersByClOrdID  map[string]map[string]any
+	positions        []map[string]any
+	account          map[string]any
+	quote            map[string]any
+	trade            map[string]any
+	activityPages    [][]map[string]any
+	activityRequests []url.Values
 
 	// duplicateOn, when set, makes the next PlaceOrder for this client_order_id
 	// return a 422 duplicate (to drive the idempotency-on-duplicate path).
@@ -171,6 +187,19 @@ func newFakeAlpaca(t *testing.T) *fakeAlpaca {
 		}
 		sym := r.URL.Query().Get("symbols")
 		writeJSON(w, map[string]any{"trades": map[string]any{sym: f.trade}})
+	})
+
+	mux.HandleFunc("/v2/account/activities", func(w http.ResponseWriter, r *http.Request) {
+		if !checkAuth(w, r) {
+			return
+		}
+		f.activityRequests = append(f.activityRequests, r.URL.Query())
+		idx := len(f.activityRequests) - 1
+		if idx >= len(f.activityPages) {
+			writeJSON(w, []map[string]any{})
+			return
+		}
+		writeJSON(w, f.activityPages[idx])
 	})
 
 	f.server = httptest.NewServer(mux)
@@ -366,6 +395,149 @@ func TestAlpaca_PlaceOrder_NonDuplicate422_Propagates(t *testing.T) {
 	// And it must NOT have been swallowed into a resolved/existing order.
 	if bo.ClOrdID != "" {
 		t.Fatalf("non-duplicate 422 must not resolve to an order, got %+v", bo)
+	}
+}
+
+func TestAlpaca_FillsSincePaginatesAndMapsDecimalExact(t *testing.T) {
+	f := newFakeAlpaca(t)
+	start := time.Date(2026, 7, 4, 14, 0, 0, 0, time.UTC)
+	t1 := start.Add(time.Minute)
+	t2 := start.Add(2 * time.Minute)
+	t3 := start.Add(3 * time.Minute)
+	f.activityPages = [][]map[string]any{
+		{
+			{"id": "fill-1", "activity_type": "FILL", "transaction_time": t1.Format(time.RFC3339Nano), "type": "fill", "price": "100.25", "qty": "2.5", "side": "buy", "symbol": "AAPL", "order_id": "ord-1", "order_status": "filled"},
+			{"id": "fill-2", "activity_type": "FILL", "transaction_time": t2.Format(time.RFC3339Nano), "type": "partial_fill", "price": "99.75", "qty": "1.25", "side": "sell", "symbol": "MSFT", "order_id": "ord-2", "order_status": "filled"},
+		},
+		{
+			{"id": "fill-3", "activity_type": "FILL", "transaction_time": t3.Format(time.RFC3339Nano), "type": "fill", "price": "101.125", "qty": "0.5", "side": "buy", "symbol": "AAPL", "order_id": "ord-3", "order_status": "filled"},
+		},
+	}
+	oldPageSize := fillPageSize
+	fillPageSize = 2
+	defer func() { fillPageSize = oldPageSize }()
+
+	got, err := f.broker(t).FillsSince(context.Background(), start)
+	if err != nil {
+		t.Fatalf("fills since: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("fills = %d, want 3: %+v", len(got), got)
+	}
+	if got[0].ID != "fill-1" || got[1].ID != "fill-2" || got[2].ID != "fill-3" {
+		t.Fatalf("fills not returned oldest-first: %+v", got)
+	}
+	if got[0].Qty.Cmp(dec(t, "2.5")) != 0 || got[0].Px.Cmp(dec(t, "100.25")) != 0 {
+		t.Fatalf("decimal conversion drifted: %+v", got[0])
+	}
+	if got[1].Side != orders.SideSell {
+		t.Fatalf("sell side not mapped: %+v", got[1])
+	}
+	if len(f.activityRequests) != 2 {
+		t.Fatalf("pagination requests = %d, want 2", len(f.activityRequests))
+	}
+	first := f.activityRequests[0]
+	if first.Get("activity_types") != "FILL" || first.Get("direction") != "asc" || first.Get("page_size") != "2" {
+		t.Fatalf("bad fill query: %v", first)
+	}
+	if first.Get("after") != start.Format(time.RFC3339Nano) {
+		t.Fatalf("first after = %q, want %q", first.Get("after"), start.Format(time.RFC3339Nano))
+	}
+	if f.activityRequests[1].Get("after") != t2.Format(time.RFC3339Nano) {
+		t.Fatalf("second after = %q, want last fill time %q", f.activityRequests[1].Get("after"), t2.Format(time.RFC3339Nano))
+	}
+}
+
+func TestFetchFillsSinceFailsLoudWhenPageCapWouldTruncate(t *testing.T) {
+	oldPageSize := fillPageSize
+	oldMaxPages := fillMaxPages
+	fillPageSize = 2
+	fillMaxPages = 3
+	defer func() {
+		fillPageSize = oldPageSize
+		fillMaxPages = oldMaxPages
+	}()
+
+	start := time.Date(2026, 7, 4, 14, 0, 0, 0, time.UTC)
+	calls := 0
+	got, err := fetchFillsSince(context.Background(), start, func(req sdk.GetAccountActivitiesRequest) ([]sdk.AccountActivity, error) {
+		calls++
+		return []sdk.AccountActivity{
+			testFillActivity(t, "fill-a", req.After.Add(time.Minute)),
+			testFillActivity(t, "fill-b", req.After.Add(2*time.Minute)),
+		}, nil
+	})
+
+	if err == nil {
+		t.Fatalf("expected page-cap truncation to fail loud, got nil error with %d fills", len(got))
+	}
+	if !strings.Contains(err.Error(), "refusing to return a partial fill set") {
+		t.Fatalf("error = %q, want loud partial-fill refusal", err)
+	}
+	if got != nil {
+		t.Fatalf("got partial fills on truncation: %+v", got)
+	}
+	if calls != fillMaxPages {
+		t.Fatalf("fetch calls = %d, want capped %d", calls, fillMaxPages)
+	}
+}
+
+func TestFetchFillsSinceReturnsCompleteBoundedPages(t *testing.T) {
+	oldPageSize := fillPageSize
+	oldMaxPages := fillMaxPages
+	fillPageSize = 2
+	fillMaxPages = 3
+	defer func() {
+		fillPageSize = oldPageSize
+		fillMaxPages = oldMaxPages
+	}()
+
+	start := time.Date(2026, 7, 4, 14, 0, 0, 0, time.UTC)
+	pages := [][]sdk.AccountActivity{
+		{
+			testFillActivity(t, "fill-1", start.Add(time.Minute)),
+			testFillActivity(t, "fill-2", start.Add(2*time.Minute)),
+		},
+		{
+			testFillActivity(t, "fill-3", start.Add(3*time.Minute)),
+		},
+	}
+	calls := 0
+	got, err := fetchFillsSince(context.Background(), start, func(req sdk.GetAccountActivitiesRequest) ([]sdk.AccountActivity, error) {
+		if calls >= len(pages) {
+			return nil, nil
+		}
+		page := pages[calls]
+		calls++
+		return page, nil
+	})
+	if err != nil {
+		t.Fatalf("fetch fills: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("fills = %d, want 3: %+v", len(got), got)
+	}
+	if got[0].ID != "fill-1" || got[1].ID != "fill-2" || got[2].ID != "fill-3" {
+		t.Fatalf("fills not returned oldest-first: %+v", got)
+	}
+	if calls != 2 {
+		t.Fatalf("fetch calls = %d, want 2", calls)
+	}
+}
+
+func testFillActivity(t *testing.T, id string, at time.Time) sdk.AccountActivity {
+	t.Helper()
+	return sdk.AccountActivity{
+		ID:              id,
+		ActivityType:    "FILL",
+		TransactionTime: at,
+		Type:            "fill",
+		Price:           sdkDec(t, "100.25"),
+		Qty:             sdkDec(t, "1.5"),
+		Side:            "buy",
+		Symbol:          "AAPL",
+		OrderID:         "ord-" + id,
+		OrderStatus:     "filled",
 	}
 }
 

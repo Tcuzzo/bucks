@@ -226,6 +226,7 @@ type Trader struct {
 	lastReport    time.Time
 	haveReport    bool
 	halted        bool // latched once we observe/raise a halt (mirrors the switch)
+	dailyLossHit  bool // self-clearing daily-loss circuit, separate from KillSwitch
 }
 
 // NewTrader validates the config and builds a Trader. A nil Now, Engine, Broker,
@@ -264,10 +265,13 @@ func (t *Trader) LiveEnabled() bool { return t.cfg.LiveEnabled }
 //  1. Update peak equity and check the drawdown breach against `equity`. On a
 //     breach -> HALT the kill switch, alert, return OutcomeHalted — place NOTHING.
 //  2. If the kill switch is already HALTED -> OutcomeHalted, no trade (alert once).
-//  3. If the market is closed       -> OutcomeMarketClosed, no trade.
-//  4. If there is no proposal       -> OutcomeNoSignal.
-//  5. risk.CheckOrder(proposal)     -> rejected => OutcomeRiskRejected, no trade.
-//  6. Classify against the band:
+//  3. If daily realized loss hit the daily budget -> OutcomeHalted, alert once,
+//     no trade. This is a self-clearing daily circuit, not the durable kill
+//     switch; it clears when the caller's UTC-day realized value resets.
+//  4. If the market is closed       -> OutcomeMarketClosed, no trade.
+//  5. If there is no proposal       -> OutcomeNoSignal.
+//  6. risk.CheckOrder(proposal)     -> rejected => OutcomeRiskRejected, no trade.
+//  7. Classify against the band:
 //     within -> place automatically (paper).
 //     above  -> RequestApproval and WAIT; Approved => place; Denied/timeout => no.
 //
@@ -305,7 +309,27 @@ func (t *Trader) Tick(ctx context.Context, d TradeDecision, ps risk.PortfolioSta
 		return rec, nil
 	}
 
-	// 3. Market hours: off-hours, pulse only (the heartbeat path handles liveness);
+	// 3. Daily-loss circuit: evaluate EVERY tick, independent of whether the
+	//    decider proposed an order. It blocks placement for the UTC day, alerts on
+	//    the transition into breach, and clears when the source's realized-today
+	//    value resets at the next UTC boundary.
+	if decision := t.cfg.Engine.CheckDailyLoss(ps); !decision.Approved {
+		if decision.Limit == risk.LimitDailyLoss {
+			text := "Daily-loss limit hit (today's realized loss >= limit) - trading halted for the day."
+			rec := TradeRecord{Time: now, Outcome: OutcomeHalted, RiskInfo: text + " " + decision.Reason}
+			t.appendRecord(rec)
+			if err := t.alertDailyLossHit(ctx, rec.Time, rec.RiskInfo); err != nil {
+				return rec, err
+			}
+			return rec, nil
+		}
+		rec := TradeRecord{Time: now, Outcome: OutcomeRiskRejected, RiskInfo: fmt.Sprintf("risk: %s — %s", decision.Limit, decision.Reason)}
+		t.appendRecord(rec)
+		return rec, nil
+	}
+	t.clearDailyLossHit()
+
+	// 4. Market hours: off-hours, pulse only (the heartbeat path handles liveness);
 	//    we do not trade. This is recorded so reports show the skipped tick.
 	if !t.cfg.Market.IsOpen(now) {
 		rec := TradeRecord{Time: now, Outcome: OutcomeMarketClosed, RiskInfo: "market closed"}
@@ -313,7 +337,7 @@ func (t *Trader) Tick(ctx context.Context, d TradeDecision, ps risk.PortfolioSta
 		return rec, nil
 	}
 
-	// 4. No proposal -> Hold.
+	// 5. No proposal -> Hold.
 	if !d.HasProposal || d.Proposal.Qty.Sign() <= 0 {
 		rec := TradeRecord{Time: now, Outcome: OutcomeNoSignal, Reason: d.Reason}
 		t.appendRecord(rec)
@@ -330,7 +354,7 @@ func (t *Trader) Tick(ctx context.Context, d TradeDecision, ps risk.PortfolioSta
 		Reason:  d.Reason,
 	}
 
-	// 5. Pre-trade risk gate.
+	// 6. Pre-trade risk gate.
 	decision := t.cfg.Engine.CheckOrder(p, ps)
 	if !decision.Approved {
 		rec := base
@@ -340,7 +364,7 @@ func (t *Trader) Tick(ctx context.Context, d TradeDecision, ps risk.PortfolioSta
 		return rec, nil
 	}
 
-	// 6. Classify against the hybrid band: compute the per-trade risk amount and
+	// 7. Classify against the hybrid band: compute the per-trade risk amount and
 	//    notional in exact decimal, then decide auto vs approve.
 	riskAmt, notional, err := tradeMagnitude(p)
 	if err != nil {
@@ -361,7 +385,8 @@ func (t *Trader) Tick(ctx context.Context, d TradeDecision, ps risk.PortfolioSta
 // reuses the deterministic clOrdID so a retry never duplicates at the venue.
 func (t *Trader) placeAuto(ctx context.Context, base TradeRecord, p risk.OrderProposal, seq uint64) (TradeRecord, error) {
 	clOrdID := orders.ClientOrderID(t.cfg.StrategyName, p.Symbol, sideIntent(p.Side), seq)
-	if err := t.placeOnBroker(ctx, clOrdID, p); err != nil {
+	placed, err := t.placeOnBroker(ctx, clOrdID, p)
+	if !placed {
 		// A broker placement failure is recorded but is NOT a fake success.
 		rec := base
 		rec.Outcome = OutcomeRiskRejected // not placed; treated as a non-placement
@@ -416,7 +441,8 @@ func (t *Trader) placeAboveBand(ctx context.Context, base TradeRecord, p risk.Or
 
 	// Approved: place it.
 	clOrdID := orders.ClientOrderID(t.cfg.StrategyName, p.Symbol, sideIntent(p.Side), seq)
-	if perr := t.placeOnBroker(ctx, clOrdID, p); perr != nil {
+	placed, perr := t.placeOnBroker(ctx, clOrdID, p)
+	if !placed {
 		rec := base
 		rec.Outcome = OutcomeDenied // approved but not placed (broker error) — not a fill
 		rec.RiskInfo = "above band — approved but broker place failed: " + perr.Error()
@@ -437,7 +463,11 @@ func (t *Trader) placeAboveBand(ctx context.Context, base TradeRecord, p risk.Or
 // broker the loop owner supplied) — the flag is the explicit, audited switch and
 // does not silently route to a live venue here. The order is a market order keyed
 // by the deterministic clOrdID (idempotent at the venue).
-func (t *Trader) placeOnBroker(ctx context.Context, clOrdID string, p risk.OrderProposal) error {
+// It returns placed=true once the order reaches the broker, err!=nil ONLY for a
+// genuine placement failure (the order never reached the venue). Fill accounting
+// is intentionally NOT done here; the broker activity-stream reconciler is the
+// single authoritative realized-P&L path, including this bot's own fills.
+func (t *Trader) placeOnBroker(ctx context.Context, clOrdID string, p risk.OrderProposal) (placed bool, err error) {
 	req := brokers.OrderRequest{
 		ClOrdID: clOrdID,
 		Symbol:  p.Symbol,
@@ -445,8 +475,11 @@ func (t *Trader) placeOnBroker(ctx context.Context, clOrdID string, p risk.Order
 		Qty:     p.Qty,
 		Kind:    brokers.KindMarket,
 	}
-	_, err := t.cfg.Broker.PlaceOrder(ctx, req)
-	return err
+	_, err = t.cfg.Broker.PlaceOrder(ctx, req)
+	if err != nil {
+		return false, err // never reached the venue
+	}
+	return true, nil
 }
 
 // Heartbeat emits a periodic liveness / market-watch pulse driven by the injected
@@ -541,6 +574,27 @@ func (t *Trader) haltForDrawdown(ctx context.Context, peak, equity Decimal) erro
 		Text:  "HALT — " + reason,
 		Time:  t.cfg.Now(),
 	})
+}
+
+func (t *Trader) alertDailyLossHit(ctx context.Context, at time.Time, text string) error {
+	t.mu.Lock()
+	already := t.dailyLossHit
+	t.dailyLossHit = true
+	t.mu.Unlock()
+	if already {
+		return nil
+	}
+	return t.cfg.Channel.SendAlert(ctx, channel.Alert{
+		Level: channel.AlertCritical,
+		Text:  text,
+		Time:  at,
+	})
+}
+
+func (t *Trader) clearDailyLossHit() {
+	t.mu.Lock()
+	t.dailyLossHit = false
+	t.mu.Unlock()
 }
 
 // recordAndMaybeAlertHalt records a halted-tick outcome and sends a single warn

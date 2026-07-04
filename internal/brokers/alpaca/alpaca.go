@@ -16,13 +16,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	sdk "github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
 
 	"bucks/internal/brokers"
 	"bucks/internal/orders"
 )
+
+// httpTimeout bounds every Alpaca SDK HTTP call at the transport level. The SDK's
+// methods do not accept a context, so this is what actually stops a hung venue read
+// from freezing the single trade-loop goroutine (and with it the drawdown / kill-
+// switch checks). A GetOrder that times out returns an error, which ENDS the fill-
+// settle poll — so a degraded venue costs one timeout, not an unbounded stall.
+const httpTimeout = 10 * time.Second
+
+var (
+	fillPageSize = 100
+	fillMaxPages = 50
+)
+
+type fillActivityFetcher func(sdk.GetAccountActivitiesRequest) ([]sdk.AccountActivity, error)
 
 // Config configures the adapter. KeyID/Secret are the Alpaca API credentials.
 // BaseURL is the Trading API root (e.g. https://paper-api.alpaca.markets);
@@ -53,9 +69,10 @@ func New(cfg Config) (*AlpacaBroker, error) {
 		feed = "iex"
 	}
 	trading := sdk.NewClient(sdk.ClientOpts{
-		APIKey:    cfg.KeyID,
-		APISecret: cfg.Secret,
-		BaseURL:   cfg.BaseURL,
+		APIKey:     cfg.KeyID,
+		APISecret:  cfg.Secret,
+		BaseURL:    cfg.BaseURL,
+		HTTPClient: &http.Client{Timeout: httpTimeout},
 	})
 	return &AlpacaBroker{
 		trading: trading,
@@ -214,8 +231,77 @@ func (a *AlpacaBroker) GetOrder(ctx context.Context, clOrdID string) (brokers.Br
 	return mapOrder(ord)
 }
 
+// FillsSince implements brokers.FillReader using Alpaca's account activity
+// stream. The SDK returns only a page body (no next-token metadata), so pagination
+// advances the After cursor to the last fill's transaction time and stops on a
+// short/empty page, with fillMaxPages as a hard bound.
+func (a *AlpacaBroker) FillsSince(ctx context.Context, after time.Time) ([]brokers.Fill, error) {
+	return fetchFillsSince(ctx, after, a.trading.GetAccountActivities)
+}
+
+func fetchFillsSince(ctx context.Context, after time.Time, fetch fillActivityFetcher) ([]brokers.Fill, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if fillPageSize <= 0 {
+		return nil, fmt.Errorf("alpaca: fill page size must be positive")
+	}
+	cursor := after.UTC()
+	out := make([]brokers.Fill, 0)
+	for page := 0; page < fillMaxPages; page++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		acts, err := fetch(sdk.GetAccountActivitiesRequest{
+			ActivityTypes: []string{"FILL"},
+			After:         cursor,
+			Direction:     "asc",
+			PageSize:      fillPageSize,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("alpaca: get fill activities: %w", err)
+		}
+		if len(acts) == 0 {
+			return out, nil
+		}
+		for _, act := range acts {
+			if !strings.EqualFold(act.ActivityType, "FILL") {
+				continue
+			}
+			if !strings.EqualFold(act.Type, "fill") && !strings.EqualFold(act.Type, "partial_fill") {
+				continue
+			}
+			qty, err := fromSDKDecimal(act.Qty)
+			if err != nil {
+				return nil, fmt.Errorf("alpaca: fill qty for %s: %w", act.ID, err)
+			}
+			px, err := fromSDKDecimal(act.Price)
+			if err != nil {
+				return nil, fmt.Errorf("alpaca: fill price for %s: %w", act.ID, err)
+			}
+			out = append(out, brokers.Fill{
+				ID:      act.ID,
+				Symbol:  act.Symbol,
+				Side:    fromActivitySide(act.Side),
+				Qty:     qty,
+				Px:      px,
+				At:      act.TransactionTime.UTC(),
+				OrderID: act.OrderID,
+				Status:  act.OrderStatus,
+			})
+		}
+		last := acts[len(acts)-1].TransactionTime.UTC()
+		if len(acts) < fillPageSize || !last.After(cursor) {
+			return out, nil
+		}
+		cursor = last
+	}
+	return nil, fmt.Errorf("alpaca: fill activity backlog exceeds %d pages; refusing to return a partial fill set that would under-count realized P&L", fillMaxPages)
+}
+
 // compile-time assertion that AlpacaBroker satisfies the interface.
 var _ brokers.Broker = (*AlpacaBroker)(nil)
+var _ brokers.FillReader = (*AlpacaBroker)(nil)
 
 // mapOrder converts an Alpaca SDK order into our typed BrokerOrder. The SDK's
 // money fields are shopspring decimals; every one is converted into our
@@ -264,6 +350,13 @@ func toSDKSide(s orders.Side) sdk.Side {
 // fromSDKSide maps Alpaca's side back to ours (defaults to Buy on anything else).
 func fromSDKSide(s sdk.Side) orders.Side {
 	if s == sdk.Sell {
+		return orders.SideSell
+	}
+	return orders.SideBuy
+}
+
+func fromActivitySide(s string) orders.Side {
+	if strings.EqualFold(s, "sell") {
 		return orders.SideSell
 	}
 	return orders.SideBuy
