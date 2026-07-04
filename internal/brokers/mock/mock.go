@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"bucks/internal/brokers"
 	"bucks/internal/orders"
@@ -31,6 +32,8 @@ type MockBroker struct {
 	placedOrder []string
 	// canceled records ClOrdIDs that have been canceled, in cancel order.
 	canceled []string
+	// fills is the authoritative broker activity stream used by the reconciler.
+	fills []brokers.Fill
 
 	// seq drives deterministic broker order ids (no time, no rand).
 	seq int
@@ -72,6 +75,15 @@ func (m *MockBroker) SetQuote(q brokers.Quote) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.quotes[q.Symbol] = q
+}
+
+// SetFills seeds the authoritative broker fill stream returned by FillsSince.
+// Output is sorted by fill timestamp for deterministic tests.
+func (m *MockBroker) SetFills(fills []brokers.Fill) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fills = append(m.fills[:0], fills...)
+	sortFills(m.fills)
 }
 
 // SeedBrokerOrder injects a broker-side order keyed by ClOrdID. This lets a test
@@ -217,14 +229,43 @@ func (m *MockBroker) GetOrder(ctx context.Context, clOrdID string) (brokers.Brok
 	return bo, nil
 }
 
+// FillsSince implements brokers.FillReader.
+func (m *MockBroker) FillsSince(ctx context.Context, after time.Time) ([]brokers.Fill, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]brokers.Fill, 0, len(m.fills))
+	for _, f := range m.fills {
+		if f.At.After(after) {
+			out = append(out, f)
+		}
+	}
+	sortFills(out)
+	return out, nil
+}
+
 // compile-time assertion that MockBroker satisfies the interface.
 var _ brokers.Broker = (*MockBroker)(nil)
+var _ brokers.FillReader = (*MockBroker)(nil)
 
 // sortPositions orders positions by symbol for deterministic output.
 func sortPositions(ps []brokers.Position) {
 	for i := 1; i < len(ps); i++ {
 		for j := i; j > 0 && ps[j-1].Symbol > ps[j].Symbol; j-- {
 			ps[j-1], ps[j] = ps[j], ps[j-1]
+		}
+	}
+}
+
+func sortFills(fs []brokers.Fill) {
+	for i := 1; i < len(fs); i++ {
+		for j := i; j > 0; j-- {
+			if fs[j-1].At.Before(fs[j].At) || fs[j-1].At.Equal(fs[j].At) && fs[j-1].ID <= fs[j].ID {
+				break
+			}
+			fs[j-1], fs[j] = fs[j], fs[j-1]
 		}
 	}
 }

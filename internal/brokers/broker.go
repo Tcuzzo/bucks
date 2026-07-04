@@ -151,6 +151,27 @@ type BrokerOrder struct {
 	AvgPx         orders.Decimal // average fill price (zero if no fills)
 }
 
+// Fill is one authoritative venue fill from the broker's account-activity stream.
+// ID is the durable venue activity id and is the de-duplication key for realized
+// P&L accounting. Qty and Px are exact decimals; never float64.
+type Fill struct {
+	ID      string
+	Symbol  string
+	Side    orders.Side
+	Qty     orders.Decimal
+	Px      orders.Decimal
+	At      time.Time
+	OrderID string
+	Status  string
+}
+
+// FillReader is an OPTIONAL broker capability for venues that can expose their
+// authoritative fill stream. The core Broker interface stays minimal; the live
+// ledger reconciler depends only on this narrow seam.
+type FillReader interface {
+	FillsSince(ctx context.Context, after time.Time) ([]Fill, error)
+}
+
 // ErrOrderNotFound is returned by GetOrder/CancelOrder when the broker has no
 // order for the given ClOrdID. Callers use errors.Is to branch (e.g. reconcile
 // treats not-found as "the intent never reached the broker").

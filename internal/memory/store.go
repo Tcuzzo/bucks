@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"bucks/internal/brokers"
 	"bucks/internal/orders"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (BSD-3); CGO_ENABLED=0 safe
@@ -128,6 +129,21 @@ CREATE TABLE IF NOT EXISTS market_memory (
 CREATE INDEX IF NOT EXISTS idx_trade_symbol ON trade_memory(symbol);
 CREATE INDEX IF NOT EXISTS idx_trade_setup  ON trade_memory(setup);
 CREATE INDEX IF NOT EXISTS idx_market_symbol ON market_memory(symbol);
+CREATE TABLE IF NOT EXISTS broker_fills (
+	id      TEXT PRIMARY KEY,
+	symbol  TEXT NOT NULL,
+	side    TEXT NOT NULL,
+	qty     TEXT NOT NULL,
+	px      TEXT NOT NULL,
+	ts      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_broker_fills_ts ON broker_fills(ts);
+CREATE TABLE IF NOT EXISTS broker_reconcile_state (
+	id         INTEGER PRIMARY KEY CHECK (id = 1),
+	cursor     TEXT NOT NULL,
+	basis      TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
 `
 	if _, err := s.db.Exec(ddl); err != nil {
 		return fmt.Errorf("memory: migrate: %w", err)
@@ -161,6 +177,262 @@ func (s *Store) RememberTrade(t TradeMemory) (TradeMemory, error) {
 	}
 	t.ID = id
 	return t, nil
+}
+
+// BrokerFillSeen reports whether the authoritative broker activity id has already
+// been applied to the realized-P&L ledger. It lets the reconciler skip duplicate
+// fills before mutating its in-memory FIFO basis.
+func (s *Store) BrokerFillSeen(id string) (bool, error) {
+	if id == "" {
+		return false, errors.New("memory: broker fill id required")
+	}
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM broker_fills WHERE id = ?`, id).Scan(&one)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, fmt.Errorf("memory: broker fill seen %q: %w", id, err)
+}
+
+// BrokerReconcileState returns the durable broker-fill replay cursor and FIFO
+// basis. ok=false means the store has not been bootstrapped yet.
+func (s *Store) BrokerReconcileState() (cursor time.Time, basis []byte, ok bool, err error) {
+	var cursorS, basisS string
+	err = s.db.QueryRow(`SELECT cursor, basis FROM broker_reconcile_state WHERE id = 1`).Scan(&cursorS, &basisS)
+	if err == nil {
+		cursor, perr := time.Parse(time.RFC3339Nano, cursorS)
+		if perr != nil {
+			return time.Time{}, nil, false, fmt.Errorf("memory: broker reconcile cursor parse %q: %w", cursorS, perr)
+		}
+		return cursor.UTC(), []byte(basisS), true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil, false, nil
+	}
+	return time.Time{}, nil, false, fmt.Errorf("memory: broker reconcile state: %w", err)
+}
+
+// SaveBrokerReconcileState durably records the broker-fill replay cursor and the
+// FIFO basis snapshot that is authoritative at that cursor.
+func (s *Store) SaveBrokerReconcileState(cursor time.Time, basis []byte) error {
+	if cursor.IsZero() {
+		return errors.New("memory: broker reconcile cursor required")
+	}
+	if basis == nil {
+		return errors.New("memory: broker reconcile basis required")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("memory: broker reconcile state begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := saveBrokerReconcileStateTx(tx, cursor, basis); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("memory: broker reconcile state commit: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// RememberSeededBrokerFills atomically marks first-boot seed fills as seen
+// and persists the seeded FIFO basis at cursor. It writes no realized trade rows:
+// these fills are already reflected in broker.Positions() and the seeded basis.
+func (s *Store) RememberSeededBrokerFills(fills []brokers.Fill, cursor time.Time, basis []byte) error {
+	if cursor.IsZero() {
+		return errors.New("memory: broker reconcile cursor required")
+	}
+	if basis == nil {
+		return errors.New("memory: broker reconcile basis required")
+	}
+	cursorUTC := cursor.UTC()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("memory: seeded broker fills begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, f := range fills {
+		if f.ID == "" {
+			return errors.New("memory: broker fill id required")
+		}
+		if f.Symbol == "" {
+			return errors.New("memory: broker fill symbol required")
+		}
+		if f.At.IsZero() {
+			return fmt.Errorf("memory: broker fill %s timestamp required", f.ID)
+		}
+		if f.At.After(cursorUTC) {
+			return fmt.Errorf("memory: seeded broker fill %s at %s is after cursor %s", f.ID, f.At.UTC().Format(time.RFC3339Nano), cursorUTC.Format(time.RFC3339Nano))
+		}
+		if f.Qty.Sign() <= 0 {
+			return fmt.Errorf("memory: broker fill %s qty must be positive", f.ID)
+		}
+		if f.Px.Sign() <= 0 {
+			return fmt.Errorf("memory: broker fill %s price must be positive", f.ID)
+		}
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO broker_fills (id, symbol, side, qty, px, ts)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			f.ID, f.Symbol, f.Side.String(), f.Qty.String(), f.Px.String(), f.At.UTC().Format(time.RFC3339Nano),
+		); err != nil {
+			return fmt.Errorf("memory: seeded broker fill insert: %w", err)
+		}
+	}
+	if err := saveBrokerReconcileStateTx(tx, cursorUTC, basis); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("memory: seeded broker fills commit: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// RememberBrokerFill atomically marks a broker fill id as seen and, when realized
+// is non-zero, persists the realized P&L row that feeds the daily-loss breaker,
+// plus the replay cursor/FIFO basis that are authoritative after the fill.
+// Duplicate ids return inserted=false and do not add a trade row or state update.
+func (s *Store) RememberBrokerFill(id, symbol string, side orders.Side, qty, px, realized orders.Decimal, at, cursor time.Time, basis []byte) (inserted bool, err error) {
+	if id == "" {
+		return false, errors.New("memory: broker fill id required")
+	}
+	if symbol == "" {
+		return false, errors.New("memory: broker fill symbol required")
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	if cursor.IsZero() {
+		cursor = at.UTC()
+	}
+	if basis == nil {
+		return false, errors.New("memory: broker reconcile basis required")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("memory: broker fill begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	res, err := tx.Exec(
+		`INSERT OR IGNORE INTO broker_fills (id, symbol, side, qty, px, ts)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		id, symbol, side.String(), qty.String(), px.String(), at.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return false, fmt.Errorf("memory: broker fill insert: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("memory: broker fill rows affected: %w", err)
+	}
+	if rows == 0 {
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("memory: broker fill duplicate commit: %w", err)
+		}
+		committed = true
+		return false, nil
+	}
+
+	if realized.Sign() != 0 {
+		if _, err := tx.Exec(
+			`INSERT INTO trade_memory (symbol, setup, entry, exit, pnl, lesson, ts)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			symbol, "live",
+			orders.ZeroDecimal.String(), px.String(), realized.String(),
+			"realized on broker fill", at.UTC().Format(time.RFC3339Nano),
+		); err != nil {
+			return false, fmt.Errorf("memory: broker fill trade insert: %w", err)
+		}
+	}
+	if err := saveBrokerReconcileStateTx(tx, cursor, basis); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("memory: broker fill commit: %w", err)
+	}
+	committed = true
+	return true, nil
+}
+
+func saveBrokerReconcileStateTx(tx *sql.Tx, cursor time.Time, basis []byte) error {
+	_, err := tx.Exec(
+		`INSERT OR REPLACE INTO broker_reconcile_state (id, cursor, basis, updated_at)
+		 VALUES (1, ?, ?, ?)`,
+		cursor.UTC().Format(time.RFC3339Nano),
+		string(basis),
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("memory: broker reconcile state save: %w", err)
+	}
+	return nil
+}
+
+// RealizedPnLSince sums the realized P&L of every trade recorded at or after
+// `since` (inclusive). It is the LIVE source for the risk engine's daily-loss
+// circuit breaker, which was previously fed a hardcoded zero and so could never
+// fire. Persisting realized P&L here (not just in-memory) means the day's loss
+// budget survives a process restart.
+//
+// ts is stored as variable-width RFC3339Nano, so a raw string comparison is NOT
+// order-safe; the query bounds the scan by the fixed-width YYYY-MM-DD prefix, then
+// filters to the exact instant and sums in exact decimal (never float64).
+func (s *Store) RealizedPnLSince(since time.Time) (orders.Decimal, error) {
+	sinceUTC := since.UTC()
+	rows, err := s.db.Query(
+		`SELECT pnl, ts FROM trade_memory WHERE substr(ts, 1, 10) >= ?`,
+		sinceUTC.Format("2006-01-02"),
+	)
+	if err != nil {
+		return orders.ZeroDecimal, fmt.Errorf("memory: realized pnl query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	total := orders.ZeroDecimal
+	for rows.Next() {
+		var pnlS, tsS string
+		if err := rows.Scan(&pnlS, &tsS); err != nil {
+			return orders.ZeroDecimal, fmt.Errorf("memory: realized pnl scan: %w", err)
+		}
+		ts, err := time.Parse(time.RFC3339Nano, tsS)
+		if err != nil {
+			return orders.ZeroDecimal, fmt.Errorf("memory: realized pnl parse ts %q: %w", tsS, err)
+		}
+		if ts.Before(sinceUTC) {
+			continue // inside the boundary date but before the exact cutoff
+		}
+		pnl, err := orders.ParseDecimal(pnlS)
+		if err != nil {
+			return orders.ZeroDecimal, fmt.Errorf("memory: realized pnl parse %q: %w", pnlS, err)
+		}
+		if total, err = total.Add(pnl); err != nil {
+			return orders.ZeroDecimal, fmt.Errorf("memory: realized pnl sum: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return orders.ZeroDecimal, fmt.Errorf("memory: realized pnl rows: %w", err)
+	}
+	return total, nil
 }
 
 // RememberMarket records a market observation and returns it with its assigned ID.

@@ -221,6 +221,31 @@ func (e *Engine) DrawdownBreached(peakEquity, currentEquity Decimal) bool {
 	return drop.Cmp(threshold) >= 0
 }
 
+// CheckDailyLoss evaluates the portfolio-wide daily-loss breaker independent of
+// any single order proposal. It is the tick-level circuit-breaker predicate used
+// by the live harness before proposal handling, and CheckOrder reuses it so the
+// per-proposal path stays semantically identical.
+func (e *Engine) CheckDailyLoss(ps PortfolioState) Decision {
+	if e.cfg.MaxDailyLossPct.Sign() <= 0 || ps.RealizedPnLToday.Sign() >= 0 {
+		return approve()
+	}
+	if ps.Equity.Sign() <= 0 {
+		return reject(LimitInvalidInput, "account equity must be positive, got %s", ps.Equity.String())
+	}
+	lossBudget, err := e.cfg.MaxDailyLossPct.Mul(ps.Equity)
+	if err != nil {
+		return reject(LimitInvalidInput, "daily-loss budget compute: %v", err)
+	}
+	lossSoFar := ps.RealizedPnLToday.Abs()
+	if lossSoFar.Cmp(lossBudget) >= 0 {
+		return reject(LimitDailyLoss,
+			"daily loss %s reached budget %s (%s of equity %s) — halt for the day",
+			lossSoFar.String(), lossBudget.String(),
+			e.cfg.MaxDailyLossPct.String(), ps.Equity.String())
+	}
+	return approve()
+}
+
 // OrderProposal is one intent to evaluate. All money is orders.Decimal.
 //
 // Qty is always POSITIVE (the side carries direction). EntryPx is the expected
@@ -332,18 +357,8 @@ func (e *Engine) CheckOrder(p OrderProposal, ps PortfolioState) Decision {
 
 	// 2. Daily-loss halt: if today's realized LOSS already meets/exceeds the
 	//    budget, halt — reject before doing anything else portfolio-changing.
-	if e.cfg.MaxDailyLossPct.Sign() > 0 && ps.RealizedPnLToday.Sign() < 0 {
-		lossBudget, err := e.cfg.MaxDailyLossPct.Mul(ps.Equity)
-		if err != nil {
-			return reject(LimitInvalidInput, "daily-loss budget compute: %v", err)
-		}
-		lossSoFar := ps.RealizedPnLToday.Abs()
-		if lossSoFar.Cmp(lossBudget) >= 0 {
-			return reject(LimitDailyLoss,
-				"daily loss %s reached budget %s (%s of equity %s) — halt for the day",
-				lossSoFar.String(), lossBudget.String(),
-				e.cfg.MaxDailyLossPct.String(), ps.Equity.String())
-		}
+	if decision := e.CheckDailyLoss(ps); !decision.Approved {
+		return decision
 	}
 
 	// 3. Per-trade risk: qty * |entry - stop| must be <= MaxRiskPerTradePct*equity.
