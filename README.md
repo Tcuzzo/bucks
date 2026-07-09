@@ -190,13 +190,73 @@ reaches you: update once and you are on the latest.
 
 ---
 
+## How a trade turn flows
+
+BUCKS treats each turn as a gated loop: when the broker exposes fills, startup
+reconciliation and the daily-loss breaker engage before the loop arms; otherwise BUCKS
+still runs but loudly warns that the daily-loss breaker is inactive. From there, your
+playbook, market read, signal, risk gate, and optional approval decide whether an order
+reaches the broker and gets recorded in the trade ledger.
+
+```mermaid
+flowchart TD
+    Boot["Boot / Startup"]
+    BrokerFills{"Broker Exposes Fills?"}
+    BrokerReconcile["Broker Reconcile + Daily-Loss Breaker Active"]
+    InactiveDailyLoss["Warn: Daily-Loss Breaker Inactive"]
+    LoopArmed["Trade Loop Armed"]
+    Playbook["Playbook / Your Plan"]
+    Watchlist["Watchlist From Sectors"]
+    MarketRead["Market Read"]
+    StrategySignal["Strategy Signal"]
+    TradeProposal["Stop And Position Size"]
+    CircuitBreakers{"Circuit Breakers Clear?"}
+    RiskEngine["Risk Engine"]
+    RiskBand{"Inside Auto Band?"}
+    TelegramApproval["Telegram Approval"]
+    OperatorChoice{"Approve?"}
+    BrokerPlacement["Broker Placement"]
+    TradeLedger["Trade Ledger Record"]
+    PlacedTrade["Order Placed (Recorded)"]
+    NoTrade["No Trade This Turn"]
+    TradingHalted["Trading Halted"]
+
+    Boot --> BrokerFills
+    BrokerFills -- "Yes" --> BrokerReconcile
+    BrokerFills -- "No" --> InactiveDailyLoss
+    BrokerReconcile --> LoopArmed
+    InactiveDailyLoss --> LoopArmed
+    LoopArmed --> Playbook
+    Playbook --> Watchlist
+    Watchlist --> MarketRead
+    MarketRead --> StrategySignal
+    StrategySignal --> TradeProposal
+    TradeProposal --> CircuitBreakers
+    CircuitBreakers -- "No: breaker halt" --> TradingHalted
+    CircuitBreakers -- "Yes" --> RiskEngine
+    RiskEngine -- "Rejects unsafe proposal" --> NoTrade
+    RiskEngine -- "Approves proposal" --> RiskBand
+    RiskBand -- "Yes" --> BrokerPlacement
+    RiskBand -- "No: above band" --> TelegramApproval
+    TelegramApproval --> OperatorChoice
+    OperatorChoice -- "Deny or timeout" --> NoTrade
+    OperatorChoice -- "Approve" --> BrokerPlacement
+    BrokerPlacement --> TradeLedger
+    TradeLedger --> PlacedTrade
+```
+
+---
+
 ## Under the hood
 
 For the curious, BUCKS is built like a piece of trading infrastructure, not a script:
 
-- **Crash-safe by design.** Orders are written to a journal and `fsync`'d *before* they're
-  sent, with deterministic idempotency keys, so a crash mid-trade never loses or duplicates an
-  order. On startup BUCKS reconciles against the broker's truth before it arms.
+- **Crash recovery is broker-grounded.** Every order carries a deterministic idempotency key
+  (`clOrdID`), so a retry after a crash cannot double-place at the venue. BUCKS reconciles
+  against the broker's own activity stream — its authoritative record of fills and realized
+  P&L — on startup and as it runs, so its view stays matched to broker truth. The
+  `fsync` order-intent journal and WAL reconcile path are tested durability components, but
+  they are not yet wired into live order placement.
 - **One engine, two clocks.** The same deterministic event engine runs both backtests and live
   trading, proven by a bit-for-bit replay test — so what you test is what you trade.
 - **Exact money math.** Prices, sizes, and P&L use fixed-point decimals end to end. No float
@@ -218,3 +278,11 @@ gate **hard-fails on any copyleft (A)GPL/LGPL dependency**, so BUCKS stays clean
 The trading-engine patterns BUCKS uses (a deterministic event kernel, an order durability
 spine, a capability probe) were **studied from the best prior art and re-implemented as
 BUCKS's own** — inspired by, not copied. Details in `NOTICE`.
+
+## Part of a family
+
+BUCKS is one of a family of local-first, operator-owned agents: your machine, your
+keys, your models, and a clear safety model. Its public siblings are
+[HydraAgent_public](https://github.com/Tcuzzo/HydraAgent_public), a local coding &
+ops agent, and [OpenMontage](https://github.com/Tcuzzo/OpenMontage), an agentic
+video-production studio.
