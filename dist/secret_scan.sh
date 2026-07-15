@@ -5,11 +5,13 @@
 # was found (the offending lines are printed).
 #
 # It scans only TEXT files and skips the things that legitimately contain key-shaped
-# strings (this script's own patterns, the .git dir, the module cache, binaries, the
-# test fixtures that deliberately use fake "secret" strings). It looks for real secret
-# SHAPES (private-key headers, AWS-style keys, bearer tokens, Telegram-token shape, age
-# secret keys) and leaked private LAN host addresses (RFC1918 host IPs), not the word
-# "secret".
+# strings (this script's own patterns, the .git dir, the module cache, binaries). It looks
+# for real secret SHAPES (private-key headers, AWS-style keys, bearer tokens,
+# Telegram-token shape, age secret keys) and leaked private LAN host addresses (RFC1918
+# host IPs), not the word "secret".
+#
+# Test files ARE scanned. A deliberate fixture opts itself out one LINE at a time with an
+# inline "scan-ok: fixture" marker (see SCAN_OK_MARKER).
 set -uo pipefail
 
 TARGET="${1:-.}"
@@ -51,9 +53,38 @@ EXCLUDE_DIRS=(
   '.git'
   'dist/out'
 )
-# Files that legitimately contain key-SHAPED literals (this scanner; the test fixtures
-# that use fake "secret" strings to PROVE encryption; this script itself).
-EXCLUDE_FILES_RE='(secret_scan\.sh|.*_test\.go|.*\.age|SHA256SUMS)$'
+# Files excluded WHOLESALE, because every line of them is expected to look key-shaped:
+# this scanner (it carries the patterns above), age-encrypted blobs, and the checksum
+# manifest. Keep this list short, named, and justified.
+#
+# *_test.go is deliberately NOT here. Excluding the whole Go test class blinded this guard
+# across every test file in the repo, so a real key or private host address pasted into any
+# test shipped to a public repo silently. Test fixtures now declare themselves per line
+# (below) instead of hiding behind a filename.
+EXCLUDE_FILES_RE='(secret_scan\.sh|.*\.age|SHA256SUMS)$'
+
+# Inline, per-line opt-out for a DELIBERATE fixture. Put it in a trailing comment on the
+# fixture line itself -- syntax-agnostic, so "// scan-ok: fixture" (Go) and
+# "# scan-ok: fixture" (shell/YAML) both work:
+#
+#     leak := "sk-AbCdEfGh0123456789abcdef" // scan-ok: fixture
+#
+# The exemption is one line wide and visible in review, so a real secret added anywhere
+# else in the same file is still caught.
+SCAN_OK_MARKER='scan-ok: fixture'
+
+# Drop hits whose SOURCE line carries the marker. Input and output are grep's
+# "<lineno>:<rest>" form, so this works for -n (whole line) and -on (match only) alike.
+drop_marked() {
+  local file="$1" hit lineno
+  while IFS= read -r hit; do
+    lineno="${hit%%:*}"
+    if sed -n "${lineno}p" "$file" 2>/dev/null | grep -qF "$SCAN_OK_MARKER"; then
+      continue
+    fi
+    printf '%s\n' "$hit"
+  done
+}
 
 found=0
 while IFS= read -r -d '' f; do
@@ -64,7 +95,8 @@ while IFS= read -r -d '' f; do
   # Skip binary files (grep -I detects them; we pre-check with a NUL probe).
   if grep -qI . "$f" 2>/dev/null; then
     for pat in "${PATTERNS[@]}"; do
-      if hits=$(grep -nE "$pat" "$f" 2>/dev/null); then
+      hits=$(grep -nE "$pat" "$f" 2>/dev/null | drop_marked "$f")
+      if [[ -n "$hits" ]]; then
         echo "POSSIBLE SECRET in $f:"
         echo "$hits"
         found=1
@@ -73,7 +105,8 @@ while IFS= read -r -d '' f; do
     # Private LAN host-IP leak — extracted per MATCH (grep -oE), not per line, so a boundary
     # base address sharing a line with a real host IP cannot mask the leak. The boundary/
     # network base addresses are then dropped (they are not a host leak).
-    if hits=$(grep -noE "$IP_PATTERN" "$f" 2>/dev/null | grep -vE "$IP_EXCLUDE_RE"); then
+    hits=$(grep -noE "$IP_PATTERN" "$f" 2>/dev/null | grep -vE "$IP_EXCLUDE_RE" | drop_marked "$f")
+    if [[ -n "$hits" ]]; then
       echo "POSSIBLE SECRET in $f:"
       echo "$hits"
       found=1
