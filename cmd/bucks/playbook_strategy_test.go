@@ -18,7 +18,7 @@ import (
 // is tested with NO network and NO real LLM.
 type fakeBrain struct{ out string }
 
-func (f fakeBrain) Name() string { return "fake-brain" }
+func (f fakeBrain) Name() string                                     { return "fake-brain" }
 func (f fakeBrain) Complete(context.Context, string) (string, error) { return f.out, nil }
 
 func aggressiveTechPlaybook(t *testing.T) playbook.Playbook {

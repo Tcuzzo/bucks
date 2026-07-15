@@ -31,6 +31,7 @@ var brokerHTTPClient *http.Client
 //   - alpaca-paper -> the PAPER API (simulated; no real money),
 //   - alpaca-live  -> the LIVE API (real money),
 //   - coinbase / tradier -> their API, from the saved key/secret.
+//
 // The saved key/secret are passed verbatim. An unknown/empty kind is a clear error — BUCKS
 // never trades against an unknown venue. Construction is offline; only a later call hits the wire.
 func brokerFromCreds(c tui.BrokerCreds) (brokers.Broker, error) {
