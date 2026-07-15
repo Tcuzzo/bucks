@@ -8,7 +8,8 @@
 # strings (this script's own patterns, the .git dir, the module cache, binaries, the
 # test fixtures that deliberately use fake "secret" strings). It looks for real secret
 # SHAPES (private-key headers, AWS-style keys, bearer tokens, Telegram-token shape, age
-# secret keys), not the word "secret".
+# secret keys) and leaked private LAN host addresses (RFC1918 host IPs), not the word
+# "secret".
 set -uo pipefail
 
 TARGET="${1:-.}"
@@ -27,6 +28,20 @@ PATTERNS=(
   'xox[baprs]-[A-Za-z0-9-]{10,}'
   'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
 )
+
+# Private LAN host IP leak (RFC1918 host addresses — a leaked internal machine address).
+# We flag real host IPs (e.g. 10.1.2.3, 172.20.0.5, 192.168.1.70) but NOT:
+#   - loopback (127.x) / the unspecified 0.0.0.0 — they never match the RFC1918 shape below;
+#   - the RFC5737 documentation ranges (192.0.2.x / 198.51.100.x / 203.0.113.x) — not
+#     RFC1918, so they never match either;
+#   - the RFC1918 network/boundary base addresses (10.0.0.0, 172.16.0.0, 192.168.0.0),
+#     which DO match the shape but are not a host leak — dropped by IP_EXCLUDE_RE below.
+# Octets are validated 0-255 and the 172 block is bounded to 172.16-172.31 (172.16.0.0/12),
+# so out-of-range strings (192.168.999.999, 172.15.x, 172.32.x) are NOT flagged.
+_OCTET='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
+IP_PATTERN="\\b(10(\\.${_OCTET}){3}|172\\.(1[6-9]|2[0-9]|3[0-1])(\\.${_OCTET}){2}|192\\.168(\\.${_OCTET}){2})\\b"
+# Boundary/network base addresses (anchored to a full grep -oE match: "<lineno>:<ip>").
+IP_EXCLUDE_RE=':(10\.0\.0\.0|172\.16\.0\.0|192\.168\.0\.0)$'
 
 # Paths to skip (false-positive sources, not shipped secrets).
 EXCLUDE_DIRS=(
@@ -52,6 +67,14 @@ while IFS= read -r -d '' f; do
         found=1
       fi
     done
+    # Private LAN host-IP leak — extracted per MATCH (grep -oE), not per line, so a boundary
+    # base address sharing a line with a real host IP cannot mask the leak. The boundary/
+    # network base addresses are then dropped (they are not a host leak).
+    if hits=$(grep -noE "$IP_PATTERN" "$f" 2>/dev/null | grep -vE "$IP_EXCLUDE_RE"); then
+      echo "POSSIBLE SECRET in $f:"
+      echo "$hits"
+      found=1
+    fi
   fi
 done < <(
   # Build a find that prunes excluded dirs.
