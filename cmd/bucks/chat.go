@@ -86,6 +86,9 @@ func envChatBackend() (analyst.Backend, error) {
 		if baseURL == "" {
 			return nil, nil
 		}
+		if key == "" && analyst.IsKnownProviderBaseURL(baseURL) {
+			return nil, nil
+		}
 		return analyst.NewCloudKeyBackend("chat-cloud", baseURL, key, model, nil), nil
 	default:
 		// Any OpenAI-compatible provider (nemotron/nvidia/groq/cerebras/openrouter,
@@ -94,6 +97,9 @@ func envChatBackend() (analyst.Backend, error) {
 		profile, err := analyst.ProviderProfileByName(provider)
 		if err != nil {
 			return nil, err
+		}
+		if key == "" && (baseURL == "" || analyst.IsKnownProviderBaseURL(baseURL)) {
+			return nil, nil
 		}
 		if baseURL != "" {
 			// An explicit base URL overrides the profile (advanced/self-hosted).
@@ -163,7 +169,7 @@ func runChat(in io.Reader, out io.Writer, newChatter chatterFactory) error {
 // newChatterFromEnv builds a chat.Chatter over a single CloudKeyBackend pointed at the
 // configured endpoint. CloudKeyBackend is reused verbatim (the Ollama-style client) —
 // no new HTTP code. The persona carries the owner's voice (or the default). It remains
-// the explicit Ollama-path constructor used by the live chat smoke test.
+// the explicit Ollama-path constructor kept for direct constructor coverage.
 func newChatterFromEnv(baseURL, key, model, voice string) (*chat.Chatter, error) {
 	backend := analyst.NewCloudKeyBackend("chat-cloud", baseURL, key, model, nil)
 	persona := chat.NewPersona(voice)

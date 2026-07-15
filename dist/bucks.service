@@ -20,6 +20,11 @@
 # the Environment= line) — or, more securely, point at a protected env file with
 # EnvironmentFile= so the secret is not stored inside this unit. Without it the daemon
 # prints a clear message and exits instead of hanging.
+#
+# TELEGRAM PAIRING: you do not need to pre-set a chat id. The first chat to message your
+# BUCKS bot is paired automatically and remembered in ~/.config/bucks/telegram_trust.json.
+# Optionally uncomment BUCKS_TELEGRAM_CHAT_ID below if you want to lock the operator chat
+# before first contact.
 
 [Unit]
 Description=BUCKS always-on Telegram gateway
@@ -37,8 +42,8 @@ RestartSec=5
 # Headless secrets passphrase (NO system keychain on a server). Uncomment ONE:
 #Environment=BUCKS_PASSPHRASE=change-me
 #EnvironmentFile=%h/.config/bucks/bucks.env
-# Your Telegram chat id (who is allowed to command BUCKS). Required for commands to work.
-#Environment=BUCKS_TELEGRAM_CHAT_ID=000000000
+# Optional operator chat override.
+#Environment=BUCKS_TELEGRAM_CHAT_ID=replace-with-your-chat-id
 
 [Install]
 WantedBy=default.target

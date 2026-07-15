@@ -54,6 +54,7 @@ var knownSubcommands = map[string]bool{
 	"summary":  true,
 	"research": true,
 	"read":     true,
+	"doctor":   true,
 	"logo":     true,
 	"mascot":   true,
 	"version":  true,
@@ -94,7 +95,7 @@ func run(args []string) error {
 	// it is a positional subcommand handled before flag parsing; it reuses the same
 	// BUCKS_CHAT_* env backend, and with none it prints a clear message (no crash).
 	if len(args) > 0 && args[0] == "summary" {
-		return runSummaryStdio()
+		return runSummaryStdio(args[1:])
 	}
 
 	// `bucks research "<query>"` — read-only web research: search the web, read the
@@ -121,6 +122,12 @@ func run(args []string) error {
 		return runReadStdio(url)
 	}
 
+	// `bucks doctor` — inspect the installed/source checkout for update and
+	// vulnerability drift. `--check` explains the probes without running scans.
+	if len(args) > 0 && args[0] == "doctor" {
+		return runDoctor(args[1:])
+	}
+
 	// `bucks version` — print the build-stamped version + GOOS/GOARCH + go runtime
 	// version. A positional subcommand handled before flag parsing; needs no config
 	// and makes no network call.
@@ -143,7 +150,7 @@ func run(args []string) error {
 	fs.Usage = func() { _ = runHelp(os.Stderr) }
 	daemon := fs.Bool("daemon", false, "run headless (no TUI) under a service manager")
 	paperSmoke := fs.Bool("paper-smoke", false, "boot the saved config into a paper trader and place one in-band paper trade (offline acceptance), then exit")
-	chatFlag := fs.Bool("chat", false, "open the conversational REPL — talk to BUCKS like a person (backend via BUCKS_CHAT_BASEURL/_KEY/_MODEL)")
+	chatFlag := fs.Bool("chat", false, "open the conversational REPL — talk to BUCKS like a person (backend via BUCKS_CHAT_PROVIDER or BUCKS_CHAT_BASEURL/_KEY/_MODEL)")
 	live := fs.Bool("live", false, "arm REAL-MONEY live trading this session (default: paper / monitor-only)")
 	configPath := fs.String("config", defaultConfigPath(), "path to the BUCKS config file")
 	if err := fs.Parse(args); err != nil {
