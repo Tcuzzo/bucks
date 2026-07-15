@@ -220,6 +220,7 @@ func buildLiveTrader(r tui.SetupResult, configPath string, ch channel.Channel, c
 		HeartbeatEvery:  1 * time.Minute,
 		ReportEvery:     15 * time.Minute,
 		LiveEnabled:     liveActive,
+		RealMoneyVenue:  isLiveBroker(creds.Kind), // arms the placement-time guard in placeOnBroker
 		ApprovalTimeout: 5 * time.Minute,
 	})
 	if err != nil {

@@ -337,6 +337,9 @@ func (e *Engine) CheckOrder(p OrderProposal, ps PortfolioState) Decision {
 	if p.EntryPx.Sign() <= 0 {
 		return reject(LimitInvalidInput, "entry price must be positive, got %s", p.EntryPx.String())
 	}
+	if p.Side != orders.SideBuy && p.Side != orders.SideSell {
+		return reject(LimitInvalidInput, "side must be Buy or Sell, got %s", p.Side.String())
+	}
 	if ps.Equity.Sign() <= 0 {
 		return reject(LimitInvalidInput, "account equity must be positive, got %s", ps.Equity.String())
 	}
@@ -382,8 +385,8 @@ func (e *Engine) CheckOrder(p OrderProposal, ps PortfolioState) Decision {
 		}
 	}
 
-	// Compute the notional this order adds to gross exposure (qty * entry). Used
-	// by leverage / total-exposure / concentration.
+	// Compute the order notional (qty * entry). Exposure checks then project the
+	// signed post-order symbol exposure so risk-reducing exits reduce gross.
 	orderNotional, err := p.Qty.Mul(p.EntryPx)
 	if err != nil {
 		return reject(LimitInvalidInput, "order notional compute: %v", err)
@@ -402,7 +405,15 @@ func (e *Engine) CheckOrder(p OrderProposal, ps PortfolioState) Decision {
 			return reject(LimitInvalidInput, "gross exposure compute: %v", err)
 		}
 	}
-	newGross, err := curGross.Add(orderNotional)
+	curSymGross, projectedSymGross, err := symbolExposureAfterOrder(ps.Positions, p, orderNotional)
+	if err != nil {
+		return reject(LimitInvalidInput, "post-order symbol exposure compute: %v", err)
+	}
+	newGross, err := curGross.Sub(curSymGross)
+	if err != nil {
+		return reject(LimitInvalidInput, "gross exposure remove current symbol compute: %v", err)
+	}
+	newGross, err = newGross.Add(projectedSymGross)
 	if err != nil {
 		return reject(LimitInvalidInput, "new gross exposure compute: %v", err)
 	}
@@ -432,22 +443,14 @@ func (e *Engine) CheckOrder(p OrderProposal, ps PortfolioState) Decision {
 	// 6. Per-symbol concentration: this symbol's post-order exposure must be
 	//    <= MaxConcentrationPct * equity.
 	if e.cfg.MaxConcentrationPct.Sign() > 0 {
-		symGross, err := symbolExposureOf(ps.Positions, p.Symbol)
-		if err != nil {
-			return reject(LimitInvalidInput, "symbol exposure compute: %v", err)
-		}
-		newSymGross, err := symGross.Add(orderNotional)
-		if err != nil {
-			return reject(LimitInvalidInput, "new symbol exposure compute: %v", err)
-		}
 		concBudget, err := e.cfg.MaxConcentrationPct.Mul(ps.Equity)
 		if err != nil {
 			return reject(LimitInvalidInput, "concentration budget compute: %v", err)
 		}
-		if newSymGross.Cmp(concBudget) > 0 {
+		if projectedSymGross.Cmp(concBudget) > 0 {
 			return reject(LimitConcentration,
 				"post-order %s exposure %s exceeds concentration budget %s (%s of equity %s)",
-				p.Symbol, newSymGross.String(), concBudget.String(),
+				p.Symbol, projectedSymGross.String(), concBudget.String(),
 				e.cfg.MaxConcentrationPct.String(), ps.Equity.String())
 		}
 	}
@@ -528,6 +531,48 @@ func symbolExposureOf(positions map[string]HeldPosition, symbol string) (Decimal
 		return orders.ZeroDecimal, err
 	}
 	return notional.Abs(), nil
+}
+
+func symbolExposureAfterOrder(
+	positions map[string]HeldPosition,
+	p OrderProposal,
+	orderNotional Decimal,
+) (Decimal, Decimal, error) {
+	currentExposure, err := symbolExposureOf(positions, p.Symbol)
+	if err != nil {
+		return orders.ZeroDecimal, orders.ZeroDecimal, err
+	}
+	pos, ok := positions[p.Symbol]
+	if !ok || pos.Qty.IsZero() {
+		return currentExposure, orderNotional, nil
+	}
+
+	heldSign := pos.Qty.Sign()
+	sameDirection := (heldSign > 0 && p.Side == orders.SideBuy) || (heldSign < 0 && p.Side == orders.SideSell)
+	if sameDirection {
+		projected, err := currentExposure.Add(orderNotional)
+		return currentExposure, projected, err
+	}
+
+	heldQty := pos.Qty.Abs()
+	switch p.Qty.Cmp(heldQty) {
+	case -1:
+		reduction, err := p.Qty.Mul(pos.MarkPx.Abs())
+		if err != nil {
+			return orders.ZeroDecimal, orders.ZeroDecimal, err
+		}
+		projected, err := currentExposure.Sub(reduction)
+		return currentExposure, projected, err
+	case 0:
+		return currentExposure, orders.ZeroDecimal, nil
+	default:
+		excessQty, err := p.Qty.Sub(heldQty)
+		if err != nil {
+			return orders.ZeroDecimal, orders.ZeroDecimal, err
+		}
+		projected, err := excessQty.Mul(p.EntryPx)
+		return currentExposure, projected, err
+	}
 }
 
 // countOpen counts positions with a non-zero quantity.

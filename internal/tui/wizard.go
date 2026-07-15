@@ -164,8 +164,16 @@ func (b BrokerKind) valid() bool {
 	}
 }
 
+// IsRealMoney reports whether this broker is a real-money venue — any venue where
+// an order moves actual funds. Only Alpaca's paper environment is simulated; every
+// other venue (Alpaca live, Coinbase, Tradier) trades the owner's real money and
+// must get the full live-arm treatment.
+func (b BrokerKind) IsRealMoney() bool {
+	return b == BrokerAlpacaLive || b == BrokerCoinbase || b == BrokerTradier
+}
+
 // isLive reports whether this broker selection trades real money.
-func (b BrokerKind) isLive() bool { return b == BrokerAlpacaLive }
+func (b BrokerKind) isLive() bool { return b.IsRealMoney() }
 
 // BrokerCreds is one broker connection the owner configured.
 type BrokerCreds struct {

@@ -19,12 +19,15 @@ TARGET="${1:-.}"
 # - AWS access key id (AKIA...) and generic 40-char secret access keys assigned to a var
 # - GitHub / Slack / generic bearer tokens
 # - age secret keys (AGE-SECRET-KEY-...)
+# - Hosted LLM API keys (NVIDIA nvapi-..., OpenAI-compatible sk-...)
 # - Alpaca-style live key assignments
 PATTERNS=(
   '-----BEGIN [A-Z ]*PRIVATE KEY-----'
   'AKIA[0-9A-Z]{16}'
   'AGE-SECRET-KEY-1[0-9A-Z]+'
   'ghp_[A-Za-z0-9]{20,}'
+  'nvapi-[A-Za-z0-9_-]{16,}'
+  'sk-[A-Za-z0-9_-]{20,}'
   'xox[baprs]-[A-Za-z0-9-]{10,}'
   'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
 )

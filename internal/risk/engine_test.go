@@ -335,6 +335,11 @@ func TestCheckOrder_InvalidInput(t *testing.T) {
 			p:    OrderProposal{Symbol: "X", Side: orders.SideBuy, Qty: d(t, "1"), EntryPx: d(t, "10"), StopPx: d(t, "9"), AccountEquity: orders.ZeroDecimal},
 			ps:   PortfolioState{Equity: orders.ZeroDecimal, OpenPositionCount: -1, Positions: map[string]HeldPosition{}},
 		},
+		{
+			name: "invalid side",
+			p:    OrderProposal{Symbol: "X", Side: orders.Side(99), Qty: d(t, "1"), EntryPx: d(t, "10"), StopPx: d(t, "9"), AccountEquity: d(t, "1000")},
+			ps:   PortfolioState{Equity: d(t, "1000"), OpenPositionCount: -1, Positions: map[string]HeldPosition{}},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -346,6 +351,36 @@ func TestCheckOrder_InvalidInput(t *testing.T) {
 				t.Fatalf("want LimitInvalidInput, got %s", dec.Limit)
 			}
 		})
+	}
+}
+
+func TestCheckOrder_InvalidSideCannotMasqueradeAsReducingExposure(t *testing.T) {
+	e := NewEngine(Config{
+		MaxGrossLeverage: d(t, "1"),
+		RequireStop:      false,
+	})
+	ps := PortfolioState{
+		Equity:            d(t, "100000"),
+		Cash:              d(t, "0"),
+		OpenPositionCount: -1,
+		Positions: map[string]HeldPosition{
+			"AAPL": {Qty: d(t, "1200"), MarkPx: d(t, "100")},
+		},
+	}
+	p := OrderProposal{
+		Symbol:        "AAPL",
+		Side:          orders.Side(99),
+		Qty:           d(t, "300"),
+		EntryPx:       d(t, "100"),
+		AccountEquity: d(t, "100000"),
+	}
+
+	dec := e.CheckOrder(p, ps)
+	if dec.Approved {
+		t.Fatal("invalid side must not be approved as a risk-reducing exit")
+	}
+	if dec.Limit != LimitInvalidInput {
+		t.Fatalf("want LimitInvalidInput, got %s (%s)", dec.Limit, dec.Reason)
 	}
 }
 
@@ -372,6 +407,169 @@ func TestCheckOrder_AddToExistingDoesNotOpenSlot(t *testing.T) {
 	dec := e.CheckOrder(p, ps)
 	if !dec.Approved {
 		t.Fatalf("adding to existing symbol at max-open should be approved, got %s: %s", dec.Limit, dec.Reason)
+	}
+}
+
+func TestCheckOrder_RiskReducingOrdersReduceExposure(t *testing.T) {
+	cfg := Config{
+		MaxGrossLeverage:    d(t, "1"),
+		MaxConcentrationPct: d(t, "1"),
+		RequireStop:         false,
+	}
+	e := NewEngine(cfg)
+	cases := []struct {
+		name      string
+		heldQty   string
+		orderSide orders.Side
+	}{
+		{
+			name:      "sell reduces long",
+			heldQty:   "1200",
+			orderSide: orders.SideSell,
+		},
+		{
+			name:      "buy reduces short",
+			heldQty:   "-1200",
+			orderSide: orders.SideBuy,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := PortfolioState{
+				Equity:            d(t, "100000"),
+				Cash:              d(t, "0"),
+				OpenPositionCount: -1,
+				Positions: map[string]HeldPosition{
+					"AAPL": {Qty: d(t, tc.heldQty), MarkPx: d(t, "100")},
+				},
+			}
+			p := OrderProposal{
+				Symbol:        "AAPL",
+				Side:          tc.orderSide,
+				Qty:           d(t, "300"),
+				EntryPx:       d(t, "100"),
+				AccountEquity: d(t, "100000"),
+			}
+
+			dec := e.CheckOrder(p, ps)
+			if !dec.Approved {
+				t.Fatalf("risk-reducing order should be approved, got %s: %s", dec.Limit, dec.Reason)
+			}
+		})
+	}
+}
+
+func TestCheckOrder_ShortOpeningSellStillIncreasesExposure(t *testing.T) {
+	e := NewEngine(Config{
+		MaxGrossLeverage: d(t, "1"),
+		RequireStop:      false,
+	})
+	ps := PortfolioState{
+		Equity:            d(t, "100000"),
+		Cash:              d(t, "0"),
+		OpenPositionCount: -1,
+		Positions:         map[string]HeldPosition{},
+	}
+	p := OrderProposal{
+		Symbol:        "AAPL",
+		Side:          orders.SideSell,
+		Qty:           d(t, "1100"),
+		EntryPx:       d(t, "100"),
+		AccountEquity: d(t, "100000"),
+	}
+
+	dec := e.CheckOrder(p, ps)
+	if dec.Approved {
+		t.Fatal("short-opening sell over gross budget must still be rejected")
+	}
+	if dec.Limit != LimitGrossLeverage {
+		t.Fatalf("want LimitGrossLeverage, got %s (%s)", dec.Limit, dec.Reason)
+	}
+}
+
+func TestCheckOrder_FlipAcrossFlatCountsOnlyExcessExposure(t *testing.T) {
+	e := NewEngine(Config{
+		MaxGrossLeverage: d(t, "1"),
+		RequireStop:      false,
+	})
+	ps := PortfolioState{
+		Equity:            d(t, "100000"),
+		Cash:              d(t, "0"),
+		OpenPositionCount: -1,
+		Positions: map[string]HeldPosition{
+			"AAPL": {Qty: d(t, "100"), MarkPx: d(t, "100")},
+		},
+	}
+	p := OrderProposal{
+		Symbol:        "AAPL",
+		Side:          orders.SideSell,
+		Qty:           d(t, "150"),
+		EntryPx:       d(t, "100"),
+		AccountEquity: d(t, "100000"),
+	}
+
+	dec := e.CheckOrder(p, ps)
+	if !dec.Approved {
+		t.Fatalf("flip should count only excess short exposure, got %s: %s", dec.Limit, dec.Reason)
+	}
+}
+
+func TestCheckOrder_ReducingOrderUsesSuppliedGrossFastPath(t *testing.T) {
+	e := NewEngine(Config{
+		MaxGrossLeverage: d(t, "1"),
+		RequireStop:      false,
+	})
+	ps := PortfolioState{
+		Equity:            d(t, "100000"),
+		Cash:              d(t, "0"),
+		GrossExposure:     pd(t, "120000"),
+		OpenPositionCount: -1,
+		Positions: map[string]HeldPosition{
+			"AAPL": {Qty: d(t, "1200"), MarkPx: d(t, "100")},
+		},
+	}
+	p := OrderProposal{
+		Symbol:        "AAPL",
+		Side:          orders.SideSell,
+		Qty:           d(t, "300"),
+		EntryPx:       d(t, "100"),
+		AccountEquity: d(t, "100000"),
+	}
+
+	dec := e.CheckOrder(p, ps)
+	if !dec.Approved {
+		t.Fatalf("supplied gross fast path should still reduce held symbol exposure, got %s: %s", dec.Limit, dec.Reason)
+	}
+}
+
+func TestCheckOrder_SameDirectionShortAddStillIncreasesExposure(t *testing.T) {
+	e := NewEngine(Config{
+		MaxGrossLeverage: d(t, "1"),
+		RequireStop:      false,
+	})
+	ps := PortfolioState{
+		Equity:            d(t, "100000"),
+		Cash:              d(t, "0"),
+		OpenPositionCount: -1,
+		Positions: map[string]HeldPosition{
+			"AAPL": {Qty: d(t, "-900"), MarkPx: d(t, "100")},
+		},
+	}
+	p := OrderProposal{
+		Symbol:        "AAPL",
+		Side:          orders.SideSell,
+		Qty:           d(t, "200"),
+		EntryPx:       d(t, "100"),
+		AccountEquity: d(t, "100000"),
+	}
+
+	dec := e.CheckOrder(p, ps)
+	if dec.Approved {
+		t.Fatal("same-direction short add over gross budget must still be rejected")
+	}
+	if dec.Limit != LimitGrossLeverage {
+		t.Fatalf("want LimitGrossLeverage, got %s (%s)", dec.Limit, dec.Reason)
 	}
 }
 

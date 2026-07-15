@@ -73,6 +73,10 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 	// ---- SOURCE/DEPS section ----
 	hasGoMod := fileExists("go.mod")
 	hasGo := hasGoExe()
+	var finalMods []ModuleStatus
+	var finalVulns []string
+	modulesScanAttempted := false
+	vulnsScanAttempted := false
 
 	fmt.Fprintln(out)
 	if !hasGoMod {
@@ -84,11 +88,13 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 
 		// Outdated modules.
 		fmt.Fprint(out, "  Checking modules... ")
+		modulesScanAttempted = true
 		modOut, modErr := runGoListModules()
 		if modErr != nil {
 			fmt.Fprintf(out, "error: %v\n", modErr)
 		} else {
 			mods := parseOutdatedModules(modOut)
+			finalMods = mods
 			if len(mods) == 0 {
 				fmt.Fprintln(out, "\n  Outdated modules (0): all up to date")
 			} else {
@@ -101,11 +107,13 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 
 		// Vulnerabilities.
 		fmt.Fprint(out, "  Checking vulnerabilities... ")
+		vulnsScanAttempted = true
 		vulnOut, vulnErr := runGovulncheck()
 		if vulnErr != nil {
 			fmt.Fprintf(out, "error: %v\n", vulnErr)
 		} else {
 			vulns := parseGovulncheckVulns(vulnOut)
+			finalVulns = vulns
 			if len(vulns) == 0 {
 				fmt.Fprintln(out, "\n  Vulnerabilities (0): none")
 			} else {
@@ -131,15 +139,18 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 	// ---- Summary ----
 	fmt.Fprintln(out)
 
-	// Gather final counts for summary (re-parse if we ran the scans).
-	var finalMods []ModuleStatus
-	var finalVulns []string
+	// Gather final counts for summary only when a source scan was not already
+	// attempted, or after --fix had a chance to mutate dependencies.
 	if hasGoMod && hasGo {
-		if modOut, err := runGoListModules(); err == nil {
-			finalMods = parseOutdatedModules(modOut)
+		if fix || !modulesScanAttempted {
+			if modOut, err := runGoListModules(); err == nil {
+				finalMods = parseOutdatedModules(modOut)
+			}
 		}
-		if vulnOut, err := runGovulncheck(); err == nil {
-			finalVulns = parseGovulncheckVulns(vulnOut)
+		if fix || !vulnsScanAttempted {
+			if vulnOut, err := runGovulncheck(); err == nil {
+				finalVulns = parseGovulncheckVulns(vulnOut)
+			}
 		}
 	}
 	// Binary outdated also counts.
@@ -150,7 +161,7 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 	fmt.Fprintln(out, summarize(finalMods, finalVulns))
 
 	if len(finalVulns) > 0 {
-		os.Exit(1)
+		return fmt.Errorf("doctor: %d vulnerabilities found", len(finalVulns))
 	}
 	return nil
 }

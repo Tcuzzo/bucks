@@ -14,13 +14,16 @@ start unattended:
 ```powershell
 # Set it for your user account (persists across logins):
 setx BUCKS_PASSPHRASE "your-passphrase-here"
-# Who is allowed to command BUCKS (your Telegram chat id):
-setx BUCKS_TELEGRAM_CHAT_ID "000000000"
 ```
 
 Without `BUCKS_PASSPHRASE`, the daemon prints a clear message and exits instead of hanging.
-Without `BUCKS_TELEGRAM_CHAT_ID`, BUCKS ignores every command (fail-closed — it trusts no
-one until you tell it who you are).
+You do **not** need to set `BUCKS_TELEGRAM_CHAT_ID`: the first chat to message your BUCKS
+bot is paired automatically and remembered. To lock the operator chat before first contact,
+set it explicitly:
+
+```powershell
+# setx BUCKS_TELEGRAM_CHAT_ID "replace-with-your-chat-id"
+```
 
 ## Option A — Task Scheduler (run at logon)
 
@@ -44,8 +47,11 @@ and restarts on crash — no logon required.
 # Install the service (point at your bucks.exe):
 nssm install BUCKS "C:\Path\To\bucks.exe" --daemon
 
-# Give the service the passphrase + chat id (services don't see your setx vars):
-nssm set BUCKS AppEnvironmentExtra BUCKS_PASSPHRASE=your-passphrase-here BUCKS_TELEGRAM_CHAT_ID=000000000
+# Give the service the passphrase (services don't see your setx vars):
+nssm set BUCKS AppEnvironmentExtra BUCKS_PASSPHRASE=your-passphrase-here
+
+# Optional: lock the operator chat before first contact instead of first-message pairing.
+# nssm set BUCKS AppEnvironmentExtra BUCKS_PASSPHRASE=your-passphrase-here BUCKS_TELEGRAM_CHAT_ID=replace-with-your-chat-id
 
 # Auto-restart on exit, and start it:
 nssm set BUCKS AppExit Default Restart
@@ -56,5 +62,6 @@ Manage it later with `nssm restart BUCKS`, `nssm stop BUCKS`, or `nssm remove BU
 
 ## Confirm it works
 
-Open Telegram and send your BUCKS bot **`/status`** — it should reply with your trading
-mode, broker, equity, and halt state.
+Open Telegram and message once to pair this chat with your BUCKS bot; the first message
+confirms pairing and does not run a command. Then send **`/status`** — it should reply with
+your trading mode, broker, equity, and halt state.
