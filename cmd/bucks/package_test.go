@@ -159,9 +159,9 @@ func releaseSecretShapes() []*regexp.Regexp {
 
 func TestReleaseSecretShapesCatchHostedLLMKeys(t *testing.T) {
 	samples := []string{
-		"BUCKS_CHAT_KEY=nvapi-abcdEFGH1234567890hostedLLMKey",
-		"OPENAI_API_KEY=sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
-		"OPENAI_API_KEY=sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+		"BUCKS_CHAT_KEY=nvapi-abcdEFGH1234567890hostedLLMKey",         // scan-ok: fixture
+		"OPENAI_API_KEY=sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", // scan-ok: fixture
+		"OPENAI_API_KEY=sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",      // scan-ok: fixture
 	}
 
 	for _, sample := range samples {
@@ -183,9 +183,9 @@ func TestSecretScanScriptRejectsHostedLLMKeys(t *testing.T) {
 	tmp := t.TempDir()
 	leakPath := filepath.Join(tmp, "leaked-env.txt")
 	leak := strings.Join([]string{
-		"BUCKS_CHAT_KEY=nvapi-abcdEFGH1234567890hostedLLMKey",
-		"OPENAI_API_KEY=sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
-		"OPENAI_API_KEY=sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+		"BUCKS_CHAT_KEY=nvapi-abcdEFGH1234567890hostedLLMKey",         // scan-ok: fixture
+		"OPENAI_API_KEY=sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", // scan-ok: fixture
+		"OPENAI_API_KEY=sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",      // scan-ok: fixture
 	}, "\n")
 	if err := os.WriteFile(leakPath, []byte(leak), 0o600); err != nil {
 		t.Fatalf("write leaked fixture: %v", err)

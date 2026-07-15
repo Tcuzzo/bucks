@@ -211,7 +211,7 @@ func TestLLMKeyPersistsRoundTrip(t *testing.T) {
 	want := tui.SetupResult{
 		TelegramToken: "123456789:AA-test-token-not-a-real-secret-xx",
 		LLM:           tui.LLMNemotronFree,
-		LLMKey:        "nvapi-secret-key-12345",
+		LLMKey:        "nvapi-secret-key-12345", // scan-ok: fixture
 		Brokers: []tui.BrokerCreds{{
 			Kind:   tui.BrokerAlpacaPaper,
 			Key:    "PAPERKEY-abc12345",
@@ -239,7 +239,7 @@ func TestLLMKeyPersistsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read plain config: %v", err)
 	}
-	if strings.Contains(string(plain), "nvapi-secret-key-12345") {
+	if strings.Contains(string(plain), "nvapi-secret-key-12345") { // scan-ok: fixture
 		t.Error("LLM key leaked into the PLAIN config file — it must be encrypted at rest")
 	}
 }

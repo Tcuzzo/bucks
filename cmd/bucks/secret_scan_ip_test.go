@@ -55,10 +55,10 @@ func TestSecretScanFlagsPrivateLANHostIPs(t *testing.T) {
 	// A leaked private LAN host IP MUST be flagged (exit 1), across all three RFC1918
 	// blocks and both edges of the 172.16.0.0/12 range.
 	leaked := []string{
-		"10.1.2.3",
-		"172.16.0.1",     // just past the 172 base, inside 172.16/12
-		"172.31.255.255", // top of 172.16/12
-		"192.168.7.42",
+		"10.1.2.3",       // scan-ok: fixture
+		"172.16.0.1",     // just past the 172 base, inside 172.16/12 (scan-ok: fixture)
+		"172.31.255.255", // top of 172.16/12 (scan-ok: fixture)
+		"192.168.7.42",   // scan-ok: fixture
 	}
 	for _, ip := range leaked {
 		ip := ip
@@ -77,13 +77,13 @@ func TestSecretScanFlagsPrivateLANHostIPs(t *testing.T) {
 	// A boundary base address on the SAME line as a real host IP must NOT mask the leak
 	// (the exclusion is per-match, not per-line). The real IP is still reported.
 	t.Run("boundaryBaseDoesNotMaskRealIP", func(t *testing.T) {
-		dir := writeScanFile(t, "network = 10.0.0.0 host = 10.1.2.3\n")
+		dir := writeScanFile(t, "network = 10.0.0.0 host = 10.1.2.3\n") // scan-ok: fixture
 		code, out := runSecretScan(t, scriptPath, dir)
 		if code != 1 {
 			t.Fatalf("expected exit 1: a real host IP sharing a line with the base was masked\n%s", out)
 		}
-		if !strings.Contains(out, "10.1.2.3") {
-			t.Fatalf("real host IP 10.1.2.3 was not reported (masked by the base address)\n%s", out)
+		if !strings.Contains(out, "10.1.2.3") { // scan-ok: fixture
+			t.Fatalf("real host IP 10.1.2.3 was not reported (masked by the base address)\n%s", out) // scan-ok: fixture
 		}
 	})
 
