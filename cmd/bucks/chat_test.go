@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -98,6 +99,28 @@ func TestRunChat_DispatchedFromRun(t *testing.T) {
 	}
 }
 
+func TestLiveChatSmokeUsesSharedEnvChatterSeam(t *testing.T) {
+	src, err := os.ReadFile("chat_live_test.go")
+	if err != nil {
+		t.Fatalf("read live chat smoke source: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "envChatter()") {
+		t.Fatalf("live chat smoke must build through envChatter so it exercises %s; source:\n%s", envChatProvider, text)
+	}
+	if strings.Contains(text, "newChatterFromEnv(") {
+		t.Fatalf("live chat smoke bypasses provider routing via newChatterFromEnv; source:\n%s", text)
+	}
+	for _, want := range []string{
+		"BUCKS_CHAT_PROVIDER=nemotron",
+		"BUCKS_CHAT_KEY=nvapi-",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("live chat smoke example missing %q; source:\n%s", want, text)
+		}
+	}
+}
+
 // TestNewChatterFromEnv_BuildsCloudBackend proves the env factory wires a real
 // CloudKeyBackend (reused, no new HTTP client) without making any call — construction
 // is offline; only Say would hit the network.
@@ -138,6 +161,108 @@ func TestEnvChatBackend_NemotronBuildsOpenAICompat(t *testing.T) {
 	}
 }
 
+// TestEnvChatBackend_NemotronWithoutKeyIsNoBackend proves a named
+// OpenAI-compatible provider with no user key does not build an unauthenticated
+// cloud backend that fails later. It should fall through to the same clear
+// no-backend guidance as an unconfigured chat.
+func TestEnvChatBackend_NemotronWithoutKeyIsNoBackend(t *testing.T) {
+	for _, provider := range []string{"nemotron", "openai", "nvidia", "groq", "cerebras", "openrouter"} {
+		t.Run(provider, func(t *testing.T) {
+			t.Setenv(envChatProvider, provider)
+			t.Setenv(envChatBaseURL, "")
+			t.Setenv(envChatModel, "")
+			t.Setenv(envChatKey, "")
+
+			backend, err := envChatBackend()
+			if err != nil {
+				t.Fatalf("envChatBackend: %v", err)
+			}
+			if backend != nil {
+				t.Fatalf("%s provider without key/base URL must yield no backend, got %T", provider, backend)
+			}
+		})
+	}
+}
+
+// TestEnvChatBackend_HostedProviderBaseURLWithoutKeyIsNoBackend proves that
+// pasting a known hosted OpenAI-compatible base URL does not bypass the user-key
+// requirement. Those providers need a real per-user bearer key; otherwise chat,
+// summary, and research should use the clean no-backend guidance path.
+func TestEnvChatBackend_HostedProviderBaseURLWithoutKeyIsNoBackend(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		baseURL  string
+	}{
+		{provider: "nemotron", baseURL: "https://integrate.api.nvidia.com/v1"},
+		{provider: "nemotron", baseURL: "https://integrate.api.nvidia.com"},
+		{provider: "nvidia", baseURL: "https://integrate.api.nvidia.com/v1/"},
+		{provider: "groq", baseURL: "https://api.groq.com/openai/v1"},
+		{provider: "groq", baseURL: "https://api.groq.com/openai"},
+		{provider: "cerebras", baseURL: "https://api.cerebras.ai/v1"},
+		{provider: "cerebras", baseURL: "https://api.cerebras.ai"},
+		{provider: "openrouter", baseURL: "https://openrouter.ai/api/v1"},
+		{provider: "openrouter", baseURL: "https://openrouter.ai/api"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			t.Setenv(envChatProvider, tc.provider)
+			t.Setenv(envChatBaseURL, tc.baseURL)
+			t.Setenv(envChatModel, "")
+			t.Setenv(envChatKey, "")
+
+			backend, err := envChatBackend()
+			if err != nil {
+				t.Fatalf("envChatBackend: %v", err)
+			}
+			if backend != nil {
+				t.Fatalf("%s hosted base URL without key must yield no backend, got %T", tc.provider, backend)
+			}
+		})
+	}
+}
+
+// TestEnvChatBackend_DefaultProviderHostedBaseURLWithoutKeyIsNoBackend proves
+// provider-less env config cannot accidentally treat a pasted hosted OpenAI base
+// URL as a keyless Ollama endpoint.
+func TestEnvChatBackend_DefaultProviderHostedBaseURLWithoutKeyIsNoBackend(t *testing.T) {
+	for _, provider := range []string{"", "ollama"} {
+		t.Run(provider, func(t *testing.T) {
+			t.Setenv(envChatProvider, provider)
+			t.Setenv(envChatBaseURL, "https://api.groq.com/openai/v1")
+			t.Setenv(envChatModel, "")
+			t.Setenv(envChatKey, "")
+
+			backend, err := envChatBackend()
+			if err != nil {
+				t.Fatalf("envChatBackend: %v", err)
+			}
+			if backend != nil {
+				t.Fatalf("default provider with hosted base URL and no key must yield no backend, got %T", backend)
+			}
+		})
+	}
+}
+
+// TestEnvChatBackend_CustomCompatEndpointMayOmitKey preserves the advanced/local
+// OpenAI-compatible path: an explicit base URL is enough to intentionally use a
+// no-auth endpoint.
+func TestEnvChatBackend_CustomCompatEndpointMayOmitKey(t *testing.T) {
+	t.Setenv(envChatProvider, "nemotron")
+	t.Setenv(envChatBaseURL, "http://localhost:8000/v1")
+	t.Setenv(envChatModel, "local-model")
+	t.Setenv(envChatKey, "")
+
+	backend, err := envChatBackend()
+	if err != nil {
+		t.Fatalf("envChatBackend: %v", err)
+	}
+	if backend == nil {
+		t.Fatal("custom OpenAI-compatible base URL should build a backend even without a key")
+	}
+	if _, ok := backend.(*analyst.OpenAICompatBackend); !ok {
+		t.Fatalf("backend type = %T, want *analyst.OpenAICompatBackend", backend)
+	}
+}
+
 // TestEnvChatBackend_DefaultIsOllamaUnchanged proves the existing default path is
 // untouched: with no provider set and a base URL present, the backend is the
 // Ollama-style CloudKeyBackend; with no provider AND no base URL, there is no
@@ -172,5 +297,13 @@ func TestEnvChatBackend_UnknownProviderErrors(t *testing.T) {
 	t.Setenv(envChatKey, "k")
 	if _, err := envChatBackend(); err == nil {
 		t.Fatal("unknown provider should error")
+	}
+}
+
+func TestEnvChatBackend_UnknownProviderErrorsWithoutKey(t *testing.T) {
+	t.Setenv(envChatProvider, "totally-bogus")
+	t.Setenv(envChatKey, "")
+	if _, err := envChatBackend(); err == nil {
+		t.Fatal("unknown provider should error before no-key fallback")
 	}
 }

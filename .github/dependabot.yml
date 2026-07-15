@@ -1,0 +1,13 @@
+# Keep the dependency surface patched. BUCKS is real-money software with a small,
+# curated go.mod — updates should arrive as small, reviewable PRs, weekly, not as
+# a surprise during an incident.
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
