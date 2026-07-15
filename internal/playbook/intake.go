@@ -29,10 +29,10 @@ const (
 // blank answer is acceptable. The Question set is the fixed, auditable script the
 // onboarding wizard (TUI) walks — there is no hidden question.
 type Question struct {
-	Id       string
-	Prompt   string
-	Type     QuestionType
-	Options  []string // for TypeEnum — the choices SHOWN to the owner
+	Id      string
+	Prompt  string
+	Type    QuestionType
+	Options []string // for TypeEnum — the choices SHOWN to the owner
 	// Accept lists extra TypeEnum values accepted but NOT shown to the owner — legacy or
 	// alias spellings kept for back-compat (e.g. "hodl" still validates while the owner is
 	// only ever offered the plain-English "hold"). Empty for most questions.
