@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"bucks/internal/analyst"
 	"bucks/internal/channel"
 	"bucks/internal/orders"
+	"bucks/internal/risk"
+	"bucks/internal/secrets"
 	"bucks/internal/summary"
 )
 
@@ -16,14 +20,32 @@ import (
 // backend from the SAME chat env vars (BUCKS_CHAT_BASEURL/_KEY/_MODEL) and writes a
 // plain-English account summary to stdout. With no backend it prints a clear message
 // and exits 0 — it never crashes for lack of an LLM.
-func runSummaryStdio() error {
-	return runSummary(os.Stdout, envSummaryBackends, demoSnapshot())
+func runSummaryStdio(args []string) error {
+	fs := flag.NewFlagSet("summary", flag.ContinueOnError)
+	configPath := fs.String("config", summaryConfigPath(), "path to the BUCKS config file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return runSummaryFromConfig(
+		summaryOutput,
+		summaryBackends,
+		*configPath,
+		summaryPassphrase(),
+		summarySecretOptions()...,
+	)
 }
 
+var (
+	summaryOutput        io.Writer       = os.Stdout
+	summaryBackends      backendsFactory = envSummaryBackends
+	summaryConfigPath                    = defaultConfigPath
+	summaryPassphrase                    = passphraseFromEnv
+	summarySecretOptions                 = func() []secrets.Option { return nil }
+)
+
 // snapshot is the account state a summary is built from: the Report plus the mode
-// (paper/live) and halted flag. In this slice the live state wiring lands with the
-// loop; the CLI uses a demo snapshot when no live state is present, so the command
-// always produces an honest, grounded example without inventing live numbers.
+// (paper/live) and halted flag. Production `bucks summary` builds this from the
+// saved setup plus durable halt state, never from demo account numbers.
 type snapshot struct {
 	report channel.Report
 	mode   string
@@ -65,7 +87,26 @@ func runSummary(out io.Writer, newBackends backendsFactory, snap snapshot) error
 		fmt.Fprint(out, noBackendMessage("summary"))
 		return nil
 	}
+	return runSummaryWithBackends(out, backends, snap)
+}
 
+func runSummaryFromConfig(out io.Writer, newBackends backendsFactory, configPath, passphrase string, secretOpts ...secrets.Option) error {
+	backends, err := newBackends()
+	if err != nil {
+		return fmt.Errorf("summary: %w", err)
+	}
+	if len(backends) == 0 {
+		fmt.Fprint(out, noBackendMessage("summary"))
+		return nil
+	}
+	snap, err := loadSummarySnapshot(configPath, passphrase, secretOpts...)
+	if err != nil {
+		return fmt.Errorf("summary: load saved setup: %w", err)
+	}
+	return runSummaryWithBackends(out, backends, snap)
+}
+
+func runSummaryWithBackends(out io.Writer, backends []analyst.Backend, snap snapshot) error {
 	s, err := summary.SummarizeAccount(context.Background(), backends, snap.report, snap.mode, snap.halted)
 	if err != nil {
 		return fmt.Errorf("summary: %w", err)
@@ -83,9 +124,34 @@ func runSummary(out io.Writer, newBackends backendsFactory, snap snapshot) error
 	return nil
 }
 
-// demoSnapshot is a small, honest example used when no live state is wired: a paper
-// account with one position, exact-decimal figures. It lets `bucks summary` produce
-// a real, grounded summary out of the box without inventing live numbers.
+func loadSummarySnapshot(configPath, passphrase string, secretOpts ...secrets.Option) (snapshot, error) {
+	r, err := LoadSetup(configPath, passphrase, secretOpts...)
+	if err != nil {
+		return snapshot{}, err
+	}
+	snap := initialSnapshot(r)
+	halted, err := loadSummaryHaltState(configPath)
+	if err != nil {
+		return snapshot{}, err
+	}
+	return snapshot{
+		report: snap.Report,
+		mode:   "paper",
+		halted: halted,
+	}, nil
+}
+
+func loadSummaryHaltState(configPath string) (bool, error) {
+	ks, err := risk.Open(filepath.Join(filepath.Dir(configPath), "killswitch.json"))
+	if err != nil {
+		return false, err
+	}
+	halted, _ := ks.IsHalted()
+	return halted, nil
+}
+
+// demoSnapshot is a small, explicit example fixture for tests and demos. Production
+// summary output loads the owner's saved setup instead of presenting example numbers.
 func demoSnapshot() snapshot {
 	return snapshot{
 		report: channel.Report{
