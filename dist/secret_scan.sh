@@ -30,7 +30,7 @@ PATTERNS=(
 )
 
 # Private LAN host IP leak (RFC1918 host addresses — a leaked internal machine address).
-# We flag real host IPs (e.g. 10.1.2.3, 172.20.0.5, 192.168.1.70) but NOT:
+# We flag real host IPs (e.g. 10.1.2.3, 172.20.0.5, 192.168.7.42) but NOT:
 #   - loopback (127.x) / the unspecified 0.0.0.0 — they never match the RFC1918 shape below;
 #   - the RFC5737 documentation ranges (192.0.2.x / 198.51.100.x / 203.0.113.x) — not
 #     RFC1918, so they never match either;

@@ -58,7 +58,7 @@ func TestSecretScanFlagsPrivateLANHostIPs(t *testing.T) {
 		"10.1.2.3",
 		"172.16.0.1",     // just past the 172 base, inside 172.16/12
 		"172.31.255.255", // top of 172.16/12
-		"192.168.1.70",
+		"192.168.7.42",
 	}
 	for _, ip := range leaked {
 		ip := ip
