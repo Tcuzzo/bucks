@@ -17,7 +17,7 @@ func sampleConfig() Config {
 	return Config{
 		TelegramToken: "123456789:AA_SUPER_SECRET_TELEGRAM_TOKEN_zzz",
 		LLMChoice:     "both",
-		LLMKeys:       []string{"sk-LLMKEY-ABCDEF-supersecret-9999"},
+		LLMKeys:       []string{"sk-LLMKEY-ABCDEF-supersecret-9999"}, // scan-ok: fixture
 		Brokers: []BrokerCred{{
 			Kind:   "alpaca-paper",
 			Key:    "AKBROKERKEY12345SECRETKEY",
@@ -30,7 +30,7 @@ func sampleConfig() Config {
 func secretStrings() []string {
 	return []string{
 		"AA_SUPER_SECRET_TELEGRAM_TOKEN_zzz",
-		"sk-LLMKEY-ABCDEF-supersecret-9999",
+		"sk-LLMKEY-ABCDEF-supersecret-9999", // scan-ok: fixture
 		"AKBROKERKEY12345SECRETKEY",
 		"BROKERSECRET-do-not-leak-7777",
 	}
