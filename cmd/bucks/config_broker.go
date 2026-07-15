@@ -11,15 +11,17 @@ import (
 	"bucks/internal/tui"
 )
 
-// Alpaca venue endpoints. These are package VARS (not consts) ONLY so the default test suite
+// Venue endpoints. These are package VARS (not consts) ONLY so the default test suite
 // can point every adapter at an httptest server; production always uses the real endpoints.
 // The paper/live split is SAFETY-CRITICAL: a paper config must never reach the live API.
+// The coinbase/tradier adapters REQUIRE a non-empty BaseURL (they refuse to construct
+// otherwise — there is no adapter-side default), so the real production roots live here.
 var (
 	alpacaPaperBaseURL = "https://paper-api.alpaca.markets"
 	alpacaLiveBaseURL  = "https://api.alpaca.markets"
 	alpacaDataBaseURL  = "https://data.alpaca.markets"
-	coinbaseBaseURL    = "" // empty -> the coinbase adapter's own default
-	tradierBaseURL     = "" // empty -> the tradier adapter's own default
+	coinbaseBaseURL    = "https://api.coinbase.com"
+	tradierBaseURL     = "https://api.tradier.com"
 )
 
 // brokerHTTPClient is the HTTP client the coinbase/tradier adapters use (alpaca's SDK manages
@@ -51,7 +53,9 @@ func brokerFromCreds(c tui.BrokerCreds) (brokers.Broker, error) {
 
 // isLiveBroker reports whether a saved broker kind trades REAL money, so the trade-loop wiring
 // can require an explicit per-session confirmation before ever using it. Paper venues are safe
-// to run unattended; a real-money venue is not.
+// to run unattended; a real-money venue is not. The classification is ONE predicate —
+// tui.BrokerKind.IsRealMoney — shared with the wizard, so a venue can never be armable in
+// setup yet invisible to this gate (or vice versa).
 func isLiveBroker(kind tui.BrokerKind) bool {
-	return kind == tui.BrokerAlpacaLive
+	return kind.IsRealMoney()
 }

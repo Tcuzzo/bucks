@@ -176,7 +176,10 @@ func TestStartTradeLoopAlertsWhenBrokerHasNoFillReader(t *testing.T) {
 	}}
 	ch := channel.NewMockChannel()
 	var logs []string
-	stop := startTradeLoop(filepath.Join(t.TempDir(), "bucks.yaml"), r, ch, false, nil, func(format string, args ...any) {
+	// confirmLive=true: coinbase is a REAL-MONEY venue, so without the per-session
+	// confirmation the loop (correctly) never starts and the FillReader path under
+	// test here would be unreachable.
+	stop := startTradeLoop(filepath.Join(t.TempDir(), "bucks.yaml"), r, ch, true, nil, func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
 	})
 	stop()
