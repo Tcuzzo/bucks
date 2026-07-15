@@ -342,7 +342,7 @@ func TestLLMCloudKeyCollectsKey(t *testing.T) {
 	if m.CurrentStep() != StepLLM {
 		t.Fatalf("cloud-key confirm advanced off StepLLM to %v; expected the key sub-prompt", m.CurrentStep())
 	}
-	const cloudKey = "sk-cloudkey-abcdef123456"
+	const cloudKey = "sk-cloudkey-abcdef123456" // scan-ok: fixture
 	m = typeString(t, m, cloudKey)
 	if mv := m.View(); strings.Contains(mv, cloudKey) {
 		t.Errorf("cloud key was echoed in plaintext (must be masked); view:\n%s", mv)
@@ -379,7 +379,7 @@ func TestLLMBothCollectsCloudKey(t *testing.T) {
 	if m.CurrentStep() != StepLLM {
 		t.Fatalf("both confirm advanced off StepLLM to %v; expected the key sub-prompt", m.CurrentStep())
 	}
-	const bothKey = "sk-bothkey-abcdef123456"
+	const bothKey = "sk-bothkey-abcdef123456" // scan-ok: fixture
 	m = typeString(t, m, bothKey)
 	m, _ = send(t, m, enter()) // key -> broker
 	if m.CurrentStep() != StepBroker {
