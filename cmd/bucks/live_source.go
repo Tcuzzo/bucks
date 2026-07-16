@@ -82,6 +82,8 @@ func newAccountSourceWithAlerts(broker brokers.Broker, decider Decider, paceC <-
 		now = time.Now
 	}
 	var consecutiveReconcileFailures int
+	var consecutiveAccountFailures int
+	var consecutivePositionsFailures int
 	return harness.SourceFunc(func(ctx context.Context) (harness.TickInput, bool) {
 		for {
 			select {
@@ -102,9 +104,18 @@ func newAccountSourceWithAlerts(broker brokers.Broker, decider Decider, paceC <-
 			}
 			acct, err := broker.Account(ctx)
 			if err != nil {
-				continue // bad read — skip this tick; never feed a false equity to the safety gate
+				consecutiveAccountFailures++
+				surfaceBrokerStateFailure(ctx, alerts, logf, now(), "account", consecutiveAccountFailures, err)
+				continue // unknown equity/auth state — skip; never fabricate broker state
 			}
-			positions, _ := broker.Positions(ctx) // positions failure -> flat; equity-based safety still runs
+			consecutiveAccountFailures = 0
+			positions, err := broker.Positions(ctx)
+			if err != nil {
+				consecutivePositionsFailures++
+				surfaceBrokerStateFailure(ctx, alerts, logf, now(), "positions", consecutivePositionsFailures, err)
+				continue // unknown book is not flat — skip the entire tick
+			}
+			consecutivePositionsFailures = 0
 			// Realized P&L today drives the daily-loss breaker. A FAILED read must
 			// never feed a false zero (which would silently disable the breaker) —
 			// skip the tick, exactly like a bad account read. A nil reader (tests /
@@ -127,6 +138,20 @@ func newAccountSourceWithAlerts(broker brokers.Broker, decider Decider, paceC <-
 			}, true
 		}
 	})
+}
+
+func surfaceBrokerStateFailure(ctx context.Context, alerts channel.Channel, logf func(string, ...any), at time.Time, state string, consecutive int, err error) {
+	if consecutive != 1 && consecutive%reconcileFailureAlertEvery != 0 {
+		return
+	}
+	text := fmt.Sprintf("Broker %s state read failing (%d consecutive): %v - skipping this tick; portfolio risk is unknown.", state, consecutive, err)
+	if logf != nil {
+		logf("trade loop: %s", text)
+	}
+	if alerts == nil {
+		return
+	}
+	_ = alerts.SendAlert(ctx, channel.Alert{Level: channel.AlertCritical, Text: text, Time: at.UTC()})
 }
 
 func surfaceReconcileFailure(ctx context.Context, alerts channel.Channel, logf func(string, ...any), at time.Time, consecutive int, err error) {

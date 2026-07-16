@@ -10,9 +10,8 @@ import (
 )
 
 // TestIsLiveBrokerCoversEveryRealMoneyVenue pins the real-money classification for EVERY
-// broker kind the wizard offers: any venue where an order moves actual funds must be
-// classified real-money, so the trade-loop confirmation gate can never be bypassed by
-// picking a venue the predicate forgot. Only Alpaca's paper environment is simulated.
+// recognized broker kind: any venue where an order moves actual funds must be
+// classified real-money, so the construction refusal cannot be bypassed.
 func TestIsLiveBrokerCoversEveryRealMoneyVenue(t *testing.T) {
 	cases := []struct {
 		kind      tui.BrokerKind
@@ -30,30 +29,24 @@ func TestIsLiveBrokerCoversEveryRealMoneyVenue(t *testing.T) {
 	}
 }
 
-// TestBrokerFromCredsWiresRealBaseURLs proves the coinbase/tradier adapters are wired to
-// REAL production endpoints and construct successfully from saved creds (construction is
-// offline — only a later call hits the wire). An empty BaseURL is a construction ERROR in
-// both adapters, so an empty default here means the venue can never be traded at all.
+// TestBrokerFromCredsWiresRealBaseURLs pins the internal adapter URL and proves
+// legacy Coinbase configs are rejected as unsupported.
 func TestBrokerFromCredsWiresRealBaseURLs(t *testing.T) {
-	if !strings.HasPrefix(coinbaseBaseURL, "https://") {
-		t.Errorf("coinbaseBaseURL = %q, want a real https production endpoint", coinbaseBaseURL)
-	}
 	if !strings.HasPrefix(tradierBaseURL, "https://") {
 		t.Errorf("tradierBaseURL = %q, want a real https production endpoint", tradierBaseURL)
 	}
-	if _, err := brokerFromCreds(tui.BrokerCreds{Kind: tui.BrokerCoinbase, Key: "organizations/x/apiKeys/y", Secret: "fake-pem-not-a-real-secret"}); err != nil {
-		t.Errorf("coinbase creds must construct offline against the default endpoint: %v", err)
+	if _, err := brokerFromCreds(tui.BrokerCreds{Kind: tui.BrokerCoinbase, Key: "organizations/x/apiKeys/y", Secret: "fake-pem-not-a-real-secret"}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "unsupported") {
+		t.Errorf("legacy Coinbase config must fail loudly as unsupported, got: %v", err)
 	}
 	if _, err := brokerFromCreds(tui.BrokerCreds{Kind: tui.BrokerTradier, Key: "fake-access-token", Secret: "ACCT-12345"}); err != nil {
 		t.Errorf("tradier creds must construct offline against the default endpoint: %v", err)
 	}
 }
 
-// TestBuildLiveTraderRealMoneyVenuesNeedConfirm is the loop-level real-money safety proof
-// for the NON-Alpaca venues: coinbase/tradier creds WITHOUT the explicit per-session
-// confirmation (`bucks --live`) must NOT start the trade loop — no trader, no broker,
-// nothing that can place a real order — exactly like alpaca-live.
-func TestBuildLiveTraderRealMoneyVenuesNeedConfirm(t *testing.T) {
+// TestBuildLiveTraderDisablesOtherRealMoneyVenues proves legacy Coinbase and
+// Tradier configurations cannot construct a loop. Coinbase is retained
+// as a recognized legacy kind so saved configs fail closed at this earlier gate.
+func TestBuildLiveTraderDisablesOtherRealMoneyVenues(t *testing.T) {
 	for _, kind := range []tui.BrokerKind{tui.BrokerCoinbase, tui.BrokerTradier} {
 		t.Run(string(kind), func(t *testing.T) {
 			r := validSetupResult(t)
@@ -64,13 +57,13 @@ func TestBuildLiveTraderRealMoneyVenuesNeedConfirm(t *testing.T) {
 				t.Fatalf("buildLiveTrader: %v", err)
 			}
 			if res.Trader != nil {
-				t.Fatalf("SAFETY VIOLATION: %s (real money) started the loop WITHOUT a session confirmation", kind)
+				t.Fatalf("SAFETY VIOLATION: %s (real money) started the loop", kind)
 			}
 			if res.LiveActive {
-				t.Fatalf("SAFETY VIOLATION: %s live-active without confirmation", kind)
+				t.Fatalf("SAFETY VIOLATION: refused %s setup reported live-active", kind)
 			}
-			if !strings.Contains(strings.ToLower(res.Reason), "live") {
-				t.Errorf("reason should explain it stayed safe pending live confirmation, got %q", res.Reason)
+			if !strings.Contains(strings.ToLower(res.Reason), "exit path") {
+				t.Errorf("reason should explain why real-money construction is disabled, got %q", res.Reason)
 			}
 		})
 	}

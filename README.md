@@ -26,9 +26,8 @@ first-timer, switching by who it is talking to.
   breakout) plus a playbook-driven analyst, all behind a risk engine. **BUCKS reads your
   playbook — your risk tolerance, style, and sectors — and builds its OWN watchlist, picks,
   stop distances, and position sizes from it. You don't pick tickers; it's a bot.**
-- **Paper trading on by default.** BUCKS starts in **simulation** with fake money. It only
-  trades real money after you **explicitly** flip it to live — there is no accidental
-  live trading.
+- **Paper trading only.** BUCKS trades in **simulation** with fake money. It cannot
+  trade real money.
 - **Hybrid autonomy (you stay in control).** Inside a per-trade **size/risk band** you
   set, BUCKS places trades on its own. Anything **bigger than the band** pauses and **asks
   you to Approve in Telegram** — and waits. If you deny it, or you don't answer, it does
@@ -110,23 +109,24 @@ cd BUCKS_windows_amd64
 
 On first run you'll see the wizard. Answer the questions, and BUCKS connects to your
 broker's **paper** account and reaches **"trading (paper)"** — placing and managing
-simulated trades inside your band. When you're satisfied, you can review going live.
+simulated trades inside your band.
 
-After setup, just run `bucks` (or `bucks.exe`) to open the live dashboard — your
+After setup, just run `bucks` (or `bucks.exe`) to open the trading dashboard — your
 positions and health up top, and a **chat line at the bottom where you can talk to
 BUCKS** right there. Or run it headless under a service manager with `bucks --daemon`
 to reach him from anywhere over Telegram (see **Run BUCKS 24/7** below).
 
 ---
 
-## Going live (deliberately)
+## Real-money trading is not supported
 
-Live trading is a **deliberate flip**, never a default. You connect **live** broker keys and
-arm live mode during setup — and **even then, BUCKS will not place a real-money order until
-you start the session with `bucks --daemon --live`.** Without `--live`, an armed account runs
-in safe **paper / monitor** mode. Saving the arm only *remembers* your intent; going live is
-always a deliberate, per-session choice. Even live, BUCKS only auto-trades **within your band**
-and asks you to approve anything above it, and you can **/halt** everything at any time.
+BUCKS cannot trade real money. The broker contract cannot make the broker hold and verify
+the protective stop used to calculate position size, and BUCKS has no tested exit path for
+closing an open position. The old `--live` flag is rejected with an error.
+
+Real-money trading must not return until broker adapters provide verified bracket or OCO
+protection at the broker and BUCKS has a tested exit path. Until both exist, use an Alpaca
+paper account.
 
 ---
 
@@ -139,13 +139,13 @@ trader from anywhere on Telegram. Start it with:
 bucks --daemon
 ```
 
-That stands up BUCKS's always-on Telegram gateway **and the trade loop** — it watches your
-account, enforces your drawdown limit and kill switch, and (only when you arm it with
-`--live`) places risk-managed trades; otherwise it runs paper / monitor-only. The **first
+That stands up BUCKS's always-on Telegram gateway **and the paper trade loop** — it watches
+your simulated account, enforces your drawdown limit and kill switch, and places simulated
+trades. It cannot place real-money orders. The **first
 time you message your bot, that chat becomes the operator and is remembered** — no env var to
 set. Then just message your BUCKS bot:
 
-- **/status** — your trading mode (paper/live), broker, equity, and whether trading is halted
+- **/status** — your paper trading mode, broker, equity, and whether trading is halted
 - **/summary** — your equity and realized / unrealized profit-and-loss
 - **/positions** — your open positions right now
 - **/halt** — stop all trading immediately (it stays stopped, even across a restart)
@@ -256,9 +256,9 @@ For the curious, BUCKS is built like a piece of trading infrastructure, not a sc
   against the broker's own activity stream — its authoritative record of fills and realized
   P&L — on startup and as it runs, so its view stays matched to broker truth. The
   `fsync` order-intent journal and WAL reconcile path are tested durability components, but
-  they are not yet wired into live order placement.
-- **One engine, two clocks.** The same deterministic event engine runs both backtests and live
-  trading, proven by a bit-for-bit replay test — so what you test is what you trade.
+  they are not yet wired into paper order placement.
+- **One engine, two clocks.** The same deterministic event engine runs both backtests and the
+  paper trade loop, proven by a bit-for-bit replay test.
 - **Exact money math.** Prices, sizes, and P&L use fixed-point decimals end to end. No float
   rounding ever touches your money.
 - **One static file.** Pure Go, no C dependencies — a single binary that cross-compiles to

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,26 @@ import (
 	"bucks/internal/playbook"
 	"bucks/internal/risk"
 )
+
+type stateReadFailBroker struct {
+	brokers.Broker
+	accountErr   error
+	positionsErr error
+}
+
+func (b stateReadFailBroker) Account(ctx context.Context) (brokers.Account, error) {
+	if b.accountErr != nil {
+		return brokers.Account{}, b.accountErr
+	}
+	return b.Broker.Account(ctx)
+}
+
+func (b stateReadFailBroker) Positions(ctx context.Context) ([]brokers.Position, error) {
+	if b.positionsErr != nil {
+		return nil, b.positionsErr
+	}
+	return b.Broker.Positions(ctx)
+}
 
 func dec(t *testing.T, s string) orders.Decimal {
 	t.Helper()
@@ -50,6 +72,42 @@ func TestAccountSourceReadsRealEquityAndHolds(t *testing.T) {
 	}
 	if in.Decision.HasProposal {
 		t.Error("monitor-only decider must Hold (no proposal)")
+	}
+}
+
+func TestAccountSourceFailsClosedAndAlertsOnBrokerStateReadFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		accountErr   error
+		positionsErr error
+		wantAlert    string
+	}{
+		{name: "account auth failure", accountErr: errors.New("401 invalid signature"), wantAlert: "account state read failing"},
+		{name: "positions unavailable", positionsErr: errors.New("positions API unavailable"), wantAlert: "positions state read failing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := mock.New()
+			base.SetAccount(brokers.Account{Equity: dec(t, "1000"), Cash: dec(t, "1000")})
+			b := stateReadFailBroker{Broker: base, accountErr: tt.accountErr, positionsErr: tt.positionsErr}
+			ch := channel.NewMockChannel()
+			var deciderCalls int
+			src := newAccountSourceWithAlerts(b, DeciderFunc(func(context.Context, AccountSnapshot) harness.TradeDecision {
+				deciderCalls++
+				return harness.TradeDecision{}
+			}), oneTick(), nil, nil, time.Now, ch, nil)
+
+			if _, ok := src.Next(context.Background()); ok {
+				t.Fatal("source yielded a tick from unknown broker state")
+			}
+			if deciderCalls != 0 {
+				t.Fatalf("decider called %d times with unknown broker state", deciderCalls)
+			}
+			alerts := ch.Alerts()
+			if len(alerts) != 1 || alerts[0].Level != channel.AlertCritical || !strings.Contains(strings.ToLower(alerts[0].Text), tt.wantAlert) {
+				t.Fatalf("broker state failure was not surfaced loudly: %+v", alerts)
+			}
+		})
 	}
 }
 

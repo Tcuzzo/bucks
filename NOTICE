@@ -23,7 +23,7 @@ Money math:
   github.com/govalues/decimal                  MIT          (zero-alloc fixed-point decimal — BUCKS's money type)
   github.com/shopspring/decimal                MIT          (decimal, used by a dependency)
 
-Terminal UI (the guided-unpack wizard + live dashboard):
+Terminal UI (the guided-unpack wizard + trading dashboard):
   github.com/charmbracelet/bubbletea           MIT
   github.com/charmbracelet/lipgloss            MIT
   github.com/charmbracelet/colorprofile        MIT
