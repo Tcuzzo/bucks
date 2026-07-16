@@ -282,7 +282,6 @@ BUCKS's own** — inspired by, not copied. Details in `NOTICE`.
 ## Part of a family
 
 BUCKS is one of a family of local-first, operator-owned agents: your machine, your
-keys, your models, and a clear safety model. Its public siblings are
+keys, your models, and a clear safety model. Its public sibling is
 [HydraAgent_public](https://github.com/Tcuzzo/HydraAgent_public), a local coding &
-ops agent, and [OpenMontage](https://github.com/Tcuzzo/OpenMontage), an agentic
-video-production studio.
+ops agent.
