@@ -8,11 +8,11 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/govalues/decimal v0.1.36
 	github.com/muesli/termenv v0.16.0
-	github.com/pb33f/libopenapi v0.38.1
+	github.com/pb33f/libopenapi v0.38.7
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/term v0.44.0
+	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.52.0
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -46,12 +46,12 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.5 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
@@ -61,5 +61,5 @@ require (
 	github.com/alpacahq/alpaca-trade-api-go/v3 v3.11.0
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/shopspring/decimal v1.3.1
+	github.com/shopspring/decimal v1.4.0
 )
