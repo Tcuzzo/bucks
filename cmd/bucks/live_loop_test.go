@@ -47,10 +47,9 @@ func TestBuildLiveTraderPaperRuns(t *testing.T) {
 	}
 }
 
-// TestBuildLiveTraderLiveNeedsConfirm is THE real-money safety proof: an alpaca-LIVE setup
-// without an explicit per-session confirmation must NOT start the loop — no trader, no broker,
-// nothing that can place a real order. Persisting the live arm only REMEMBERS the intent.
-func TestBuildLiveTraderLiveNeedsConfirm(t *testing.T) {
+// TestBuildLiveTraderRefusesRealMoneyWithoutLegacyConfirmation proves the
+// refusal does not depend on the old confirmation value.
+func TestBuildLiveTraderRefusesRealMoneyWithoutLegacyConfirmation(t *testing.T) {
 	var paperHit, liveHit bool
 	paperSrv := acctServer(&paperHit, nil)
 	defer paperSrv.Close()
@@ -64,50 +63,44 @@ func TestBuildLiveTraderLiveNeedsConfirm(t *testing.T) {
 		t.Fatalf("buildLiveTrader: %v", err)
 	}
 	if res.Trader != nil {
-		t.Fatal("SAFETY VIOLATION: a live setup started the loop WITHOUT a session confirmation")
+		t.Fatal("SAFETY VIOLATION: a real-money setup started the loop")
 	}
 	if res.LiveActive {
-		t.Fatal("SAFETY VIOLATION: live-active without confirmation")
+		t.Fatal("SAFETY VIOLATION: refused setup reported live-active")
 	}
 	if !strings.Contains(strings.ToLower(res.Reason), "live") {
-		t.Errorf("reason should explain it stayed safe pending live confirmation, got %q", res.Reason)
+		t.Errorf("reason should explain the real-money refusal, got %q", res.Reason)
 	}
 	if liveHit {
 		t.Fatal("SAFETY VIOLATION: an unconfirmed live setup reached the live venue")
 	}
 }
 
-// TestBuildLiveTraderLiveConfirmed proves that WITH the deliberate confirmation, the live loop
-// arms: a Trader with LiveEnabled=true, connected to the LIVE venue from the saved keys.
-func TestBuildLiveTraderLiveConfirmed(t *testing.T) {
-	var paperHit, liveHit bool
-	paperSrv := acctServer(&paperHit, nil)
-	defer paperSrv.Close()
-	liveSrv := acctServer(&liveHit, nil)
-	defer liveSrv.Close()
-	defer swapAlpacaURLs(paperSrv.URL, liveSrv.URL, paperSrv.URL)()
-
+// TestBuildLiveTraderRefusesToArmRealMoney proves that even an explicit session
+// confirmation cannot construct a real-money loop while the broker contract has
+// neither venue-side protective stops nor an exit path.
+func TestBuildLiveTraderRefusesToArmRealMoney(t *testing.T) {
 	res, err := buildLiveTrader(liveArmedSetupResult(t), filepath.Join(t.TempDir(), "bucks.yaml"),
 		channel.NewMockChannel(), true, nil)
 	if err != nil {
 		t.Fatalf("buildLiveTrader: %v", err)
 	}
-	if res.Trader == nil {
-		t.Fatalf("confirmed live setup must build a trader; reason: %q", res.Reason)
+	if res.Trader != nil || res.Broker != nil {
+		t.Fatalf("SAFETY VIOLATION: real-money setup armed despite missing venue protection and exit path: %+v", res)
 	}
-	if !res.LiveActive || !res.Trader.LiveEnabled() {
-		t.Error("confirmed live setup must be live-active with LiveEnabled=true")
+	if res.LiveActive {
+		t.Fatal("SAFETY VIOLATION: refused real-money setup reported live-active")
 	}
-	if _, err := res.Broker.Account(context.Background()); err != nil {
-		t.Fatalf("broker account: %v", err)
-	}
-	if !liveHit || paperHit {
-		t.Errorf("confirmed live trader hit the wrong venue (liveHit=%v paperHit=%v)", liveHit, paperHit)
+	reason := strings.ToLower(res.Reason)
+	for _, want := range []string{"protective stop", "sizing", "exit path", "re-enable", "bracket", "oco"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("refusal reason %q does not contain %q", res.Reason, want)
+		}
 	}
 }
 
-// TestLiveLoopHonorsSharedKillSwitchHalt is the real-money halt guarantee: an operator /halt
-// trips the SHARED kill switch, and the loop's trader — built with that SAME switch — must
+// TestLiveLoopHonorsSharedKillSwitchHalt proves an operator /halt trips the shared
+// kill switch, and the paper loop's trader — built with that same switch — must
 // then refuse to trade. A tick carrying an entry proposal returns OutcomeHalted and places
 // nothing. (IsHalted reads in-memory state, so this only holds when the daemon's command
 // context and the loop share one switch — which buildLiveTrader now requires.)
@@ -158,52 +151,28 @@ func TestLiveLoopHonorsSharedKillSwitchHalt(t *testing.T) {
 	}
 }
 
-func TestStartTradeLoopAlertsWhenBrokerHasNoFillReader(t *testing.T) {
-	oldCoinbaseBaseURL := coinbaseBaseURL
-	coinbaseBaseURL = "http://127.0.0.1:1"
-	defer func() { coinbaseBaseURL = oldCoinbaseBaseURL }()
-	oldInterval := tradeLoopInterval
-	tradeLoopInterval = time.Hour
-	defer func() { tradeLoopInterval = oldInterval }()
-
+func TestStartTradeLoopAlertsWhenRealMoneyIsDisabled(t *testing.T) {
 	r := validSetupResult(t)
-	r.LLM = tui.LLMCloudKey
-	r.LLMKey = ""
-	r.Brokers = []tui.BrokerCreds{{
-		Kind:   tui.BrokerCoinbase,
-		Key:    "coinbase-key",
-		Secret: "coinbase-secret",
-	}}
+	r.Brokers = []tui.BrokerCreds{{Kind: tui.BrokerAlpacaLive, Key: "live-key", Secret: "live-secret"}}
 	ch := channel.NewMockChannel()
 	var logs []string
-	// confirmLive=true: coinbase is a REAL-MONEY venue, so without the per-session
-	// confirmation the loop (correctly) never starts and the FillReader path under
-	// test here would be unreachable.
 	stop := startTradeLoop(filepath.Join(t.TempDir(), "bucks.yaml"), r, ch, true, nil, func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
 	})
 	stop()
 
 	alerts := ch.Alerts()
-	if len(alerts) == 0 {
-		t.Fatalf("broker without FillReader must surface a loud operator alert")
+	if len(alerts) != 1 || alerts[0].Level != channel.AlertCritical {
+		t.Fatalf("real-money refusal must send one critical operator alert, got %+v", alerts)
 	}
-	if alerts[0].Level != channel.AlertCritical ||
-		!strings.Contains(alerts[0].Text, "Daily-loss breaker INACTIVE") ||
-		!strings.Contains(alerts[0].Text, "coinbase") {
-		t.Fatalf("unexpected inactive-breaker alert: %+v", alerts[0])
-	}
-	var sawInactiveLog bool
-	for _, line := range logs {
-		if strings.Contains(line, "Daily-loss breaker INACTIVE") && strings.Contains(line, "coinbase") {
-			sawInactiveLog = true
-		}
-		if strings.Contains(line, "not started") {
-			t.Fatalf("non-FillReader broker must not block trading; logs=%v", logs)
+	want := []string{"protective stop", "exit path"}
+	for _, phrase := range want {
+		if !strings.Contains(strings.ToLower(alerts[0].Text), phrase) {
+			t.Errorf("alert %q does not contain %q", alerts[0].Text, phrase)
 		}
 	}
-	if !sawInactiveLog {
-		t.Fatalf("inactive daily-loss breaker must be logged loudly; logs=%v", logs)
+	if len(logs) != 1 || !strings.Contains(strings.ToLower(logs[0]), "refusing to arm") {
+		t.Fatalf("real-money refusal must be logged once, got %v", logs)
 	}
 }
 

@@ -101,8 +101,9 @@ func riskSizedQty(equity, riskPct, entry, stop orders.Decimal) (orders.Decimal, 
 // a risk-sized long entry. The owner picks NOTHING by hand — the playbook (sectors, risk
 // tolerance, capital, drawdown, goals) drives the universe, the reasoning, the stop distance,
 // and the size. v1 is long-only entries, bounded by the risk engine's concentration /
-// max-position limits and the portfolio drawdown halt; brain-driven exits + venue stop-loss
-// orders are the next refinement.
+// max-position limits and the portfolio drawdown halt. The harness refuses these
+// risk-sized entries on real-money venues until the broker boundary can establish
+// and verify the venue-side stop their size assumes.
 type playbookDecider struct {
 	an       *analyst.Analyst
 	broker   brokers.Broker

@@ -50,10 +50,8 @@ func SecretConfigFrom(r tui.SetupResult) secrets.Config {
 		TelegramToken: r.TelegramToken,
 		LLMChoice:     string(r.LLM),
 		Brokers:       brokers,
-		// Carry the owner's deliberate live-arm and voice preference so the full setup
-		// survives a restart. Dropping r.Live here was the bug that silently reverted an
-		// armed owner back to paper. Going live still needs a per-session confirmation in
-		// the trade loop — persisting the arm is REMEMBERING the intent, not auto-trading.
+		// Keep the legacy Live field readable so old encrypted files still round-trip.
+		// Current setup writes false, and the trade loop refuses real-money brokers.
 		Live:  r.Live,
 		Voice: r.VoiceEnabled,
 	}
@@ -72,9 +70,7 @@ func SecretConfigFrom(r tui.SetupResult) secrets.Config {
 // decision through the real harness.Trader. It uses the in-memory mock broker (the
 // paper venue for this acceptance — live Alpaca-paper needs the operator's keys), the
 // risk engine built FROM THE PLAYBOOK, a durable kill switch at killSwitchPath, and a
-// mock channel (no live Telegram). Paper is the default by construction: LiveEnabled is
-// false unless the wizard explicitly armed live (and even then this acceptance routes to
-// the paper/mock broker — going truly live needs the operator's live keys + flip).
+// mock channel (no live Telegram). LiveEnabled is always false here.
 //
 // "Reaches trading (paper)" means: the Trader placed a within-band paper order on the
 // broker (OutcomeAutoPlaced). That is the honest acceptance bar for the shipped zip's
@@ -255,8 +251,8 @@ func SaveSetup(r tui.SetupResult, configPath, passphrase string, secretOpts ...s
 
 // LoadSetup reconstructs a SetupResult from the persisted plain config (playbook) +
 // encrypted secrets. It is the inverse of SaveSetup and is what the runtime uses to boot
-// from a prior unwrap. The reconstructed result is paper by default (Live is not carried
-// in this slice's persistence — going live is a deliberate runtime flip).
+// from a prior unwrap. It preserves the legacy Live field for compatibility, but
+// real-money broker construction is refused.
 //
 // secretOpts mirrors SaveSetup: empty in production (keychain preferred), and
 // secrets.ForceFileBackend() in tests so the load reads from the same hermetic file the
@@ -300,11 +296,8 @@ func LoadSetup(configPath, passphrase string, secretOpts ...secrets.Option) (tui
 		Brokers:       brokerCreds,
 		Playbook:      pb,
 		VoiceEnabled:  sc.Voice,
-		// The persisted live-ARM is carried through faithfully (sc.Live) rather than forced
-		// to false — an armed owner stays armed across restarts. This is NOT auto-live: the
-		// trade loop still defaults to paper and requires a deliberate per-session
-		// confirmation before any real order is placed. An old config (no live field)
-		// decrypts to false, the safe paper default.
+		// Preserve the legacy value when loading old encrypted files. It cannot enable
+		// real-money trading; buildLiveTrader refuses every real-money broker.
 		Live: sc.Live,
 	}, nil
 }

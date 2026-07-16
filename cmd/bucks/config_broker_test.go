@@ -59,8 +59,8 @@ func TestBrokerFromCredsPaperNeverHitsLiveVenue(t *testing.T) {
 	}
 }
 
-// TestBrokerFromCredsLiveUsesLiveVenue proves an alpaca-live config reaches the live endpoint
-// (so real-money trading actually connects when explicitly armed).
+// TestBrokerFromCredsLiveUsesLiveVenue pins the adapter's endpoint selection. The
+// production trade-loop gate refuses this kind before calling brokerFromCreds.
 func TestBrokerFromCredsLiveUsesLiveVenue(t *testing.T) {
 	var paperHit, liveHit bool
 	paperSrv := acctServer(&paperHit, nil)

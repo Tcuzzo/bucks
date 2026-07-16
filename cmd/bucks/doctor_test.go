@@ -165,6 +165,32 @@ func TestParseGovulncheckVulns_MixedMessages(t *testing.T) {
 	}
 }
 
+func TestRunGovulncheckRejectsScannerFailureAndIncompleteJSON(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		exit   int
+	}{
+		{name: "non findings exit code", output: `{"config":{"protocol_version":"v1.0.0"}}`, exit: 2},
+		{name: "truncated successful stream", output: `{"config":{"protocol_version":"v1.0.0"}`, exit: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			fake := filepath.Join(binDir, "govulncheck")
+			script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' %q\nexit %d\n", tt.output, tt.exit)
+			if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+				t.Fatalf("write fake govulncheck: %v", err)
+			}
+			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			if _, err := runGovulncheck(); err == nil {
+				t.Fatal("failed or incomplete vulnerability scan must return an error, never a clean result")
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // versionOutdated
 // ---------------------------------------------------------------------------
@@ -330,6 +356,7 @@ esac
 	}
 	fakeGovulncheck := filepath.Join(binDir, "govulncheck")
 	script := `#!/bin/sh
+printf '%s\n' '{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck"}}'
 printf '%s\n' '{"message":{"finding":{"osv":"GO-2026-9999"}}}'
 exit 3
 `
@@ -425,7 +452,7 @@ esac
 	fakeGovulncheck := filepath.Join(binDir, "govulncheck")
 	vulnScript := fmt.Sprintf(`#!/bin/sh
 printf 'x\n' >> %q
-printf '%%s\n' '{"message":{"config":{"go_version":"go1.24.0"}}}'
+printf '%%s\n' '{"config":{"protocol_version":"v1.0.0","go_version":"go1.24.0"}}'
 `, vulnCount)
 	if err := os.WriteFile(fakeGovulncheck, []byte(vulnScript), 0o755); err != nil {
 		t.Fatalf("write fake govulncheck: %v", err)
@@ -507,8 +534,14 @@ exit 2
 	)
 
 	var out bytes.Buffer
-	if err := runDoctorCore(t.Context(), u, &out, false, false); err != nil {
-		t.Fatalf("runDoctorCore should keep scan errors informational: %v\n%s", err, out.String())
+	if err := runDoctorCore(t.Context(), u, &out, false, false); err == nil {
+		t.Fatalf("runDoctorCore must return an error when vulnerability status is unknown:\n%s", out.String())
+	}
+	if !strings.Contains(strings.ToLower(out.String()), "unknown / not scanned") {
+		t.Fatalf("failed vulnerability scan must be reported as unknown / not scanned:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "Vulnerabilities (0): none") {
+		t.Fatalf("failed vulnerability scan falsely reported clean:\n%s", out.String())
 	}
 
 	assertLineCount(t, goCount, 1)

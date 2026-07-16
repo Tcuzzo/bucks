@@ -13,7 +13,7 @@ import (
 const helpText = `BUCKS — an autonomous trading agent. Usage: bucks <command> [flags]
 
 Run:
-  bucks                 open the live dashboard (or first-run setup wizard)
+  bucks                 open the trading dashboard (or first-run setup wizard)
   bucks --daemon        run headless under a service manager (always-on Telegram gateway)
   bucks --paper-smoke   boot the saved config + place one in-band paper trade, then exit
 
@@ -34,7 +34,7 @@ Flags:
   --config <path>       use a specific config file
   --chat                open the chat REPL (same as: bucks chat; BUCKS_CHAT_PROVIDER supported)
   --daemon              run headless, no TUI
-  --live                arm REAL-MONEY trading this session (default: paper / monitor-only)
+  --live                unsupported: BUCKS cannot trade real money; remove this flag
   --paper-smoke         offline paper-trade acceptance, then exit
   -h, --help            show this help
 `
