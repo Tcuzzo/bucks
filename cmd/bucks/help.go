@@ -23,6 +23,10 @@ Talk:
   bucks research "<q>"  read-only web research on a topic
   bucks read <url>      fetch + summarize a web page
 
+Build:
+  bucks understand <file> "<what it should do>"
+                        grade a candidate against your intent — scores, failures, fixes (advisory)
+
 Manage:
   bucks doctor          check updates, Go deps, and vulnerabilities
   bucks version         print the version + build info
