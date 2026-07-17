@@ -14,12 +14,38 @@ import (
 // the OpenAI-compatible request. They are sent on every call so a provider that
 // requires them (some do) never rejects the request, and so a free-tier model
 // returns a bounded, complete answer instead of an unbounded stream. NVIDIA NIM's
-// Nemotron expects temperature 1.0 per the provider's own examples; a generous
-// max_tokens leaves room for a reasoning model's chain without runaway cost.
+// Nemotron expects temperature 1.0 per the provider's own examples.
+//
+// defaultOpenAIMaxTokens suits a SHORT answer (a market lean, a chat reply). It is
+// NOT enough for a caller that needs a long structured payload out of a REASONING
+// model: such a model spends its budget thinking BEFORE it emits the payload, so a
+// tight budget returns an empty `content` (which Complete reports loudly as "empty
+// completion" — never a fabricated answer). A caller with a bigger payload raises
+// the budget explicitly with WithMaxTokens.
 const (
 	defaultOpenAITemperature = 1.0
 	defaultOpenAIMaxTokens   = 1024
 )
+
+// Option customizes an OpenAICompatBackend at construction. Options are the only
+// way to change a request default from outside the package, so every deviation from
+// the conservative defaults is explicit at the call site.
+type Option func(*OpenAICompatBackend)
+
+// WithMaxTokens sets the completion budget (max_tokens) the backend sends. A
+// non-positive value is ignored — the conservative default stands rather than a
+// silently unbounded (or zero) request.
+//
+// Raise it when the caller needs a long structured payload from a reasoning model:
+// the model's chain-of-thought is spent from the SAME budget as the answer, so a
+// budget sized for the answer alone comes back empty.
+func WithMaxTokens(n int) Option {
+	return func(b *OpenAICompatBackend) {
+		if n > 0 {
+			b.maxTokens = n
+		}
+	}
+}
 
 // OpenAICompatBackend is a thin HTTP client for ANY OpenAI-compatible
 // `/chat/completions` endpoint — the free-brain path (spec §16). It is the sibling
@@ -44,7 +70,8 @@ type OpenAICompatBackend struct {
 // NewOpenAICompatBackend builds an OpenAI-compatible backend from a ProviderProfile
 // (which carries the base URL + a sensible default model), the END-USER's own API
 // key, and an optional model override (empty => the profile's default model). name
-// defaults to the profile name when blank.
+// defaults to the profile name when blank. Optional Options (e.g. WithMaxTokens)
+// adjust the request defaults; with none, the conservative defaults apply.
 //
 // Each user supplies their own free key — treat the call as best-effort: a free
 // provider may rate-limit (HTTP 429), which Complete surfaces as an error so the
@@ -52,7 +79,7 @@ type OpenAICompatBackend struct {
 // 429 should wrap the backend with a small backoff at the routing layer; the
 // backend itself stays a single, honest round trip (no hidden retry that could
 // silently mask a degraded provider).
-func NewOpenAICompatBackend(profile ProviderProfile, apiKey, modelOverride string) *OpenAICompatBackend {
+func NewOpenAICompatBackend(profile ProviderProfile, apiKey, modelOverride string, opts ...Option) *OpenAICompatBackend {
 	name := profile.Name
 	if name == "" {
 		name = "openai-compat"
@@ -61,7 +88,7 @@ func NewOpenAICompatBackend(profile ProviderProfile, apiKey, modelOverride strin
 	if model == "" {
 		model = profile.DefaultModel
 	}
-	return &OpenAICompatBackend{
+	b := &OpenAICompatBackend{
 		name:        name,
 		baseURL:     profile.BaseURL,
 		apiKey:      apiKey,
@@ -70,6 +97,10 @@ func NewOpenAICompatBackend(profile ProviderProfile, apiKey, modelOverride strin
 		maxTokens:   defaultOpenAIMaxTokens,
 		client:      &http.Client{Timeout: defaultHTTPTimeout},
 	}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
 }
 
 // newOpenAICompatBackendWithClient is the test/injection constructor: it takes an
