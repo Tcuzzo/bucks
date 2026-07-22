@@ -81,6 +81,7 @@ Standard-library extensions & misc (all permissive):
   github.com/kr/text                           MIT
   golang.org/x/sync                            BSD-3-Clause
   golang.org/x/sys                             BSD-3-Clause
+  golang.org/x/term                            BSD-3-Clause  (no-echo passphrase prompt)
   golang.org/x/text                            BSD-3-Clause
   cloud.google.com/go                          Apache-2.0    (pulled by an indirect dependency)
 
