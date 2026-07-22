@@ -135,7 +135,7 @@ func answerIntake(t *testing.T, m WizardModel) WizardModel {
 // the SetupResult carries every expected field AND a Playbook that the real
 // playbook.BuildPlaybook accepts (no fake green — the same builder validates it).
 func TestCompletingWizardYieldsValidSetupResult(t *testing.T) {
-	m := completeHappyPath(t, false)
+	m := completeHappyPath(t)
 	if !m.Done() {
 		t.Fatal("wizard not Done after happy path")
 	}
@@ -163,7 +163,7 @@ func TestCompletingWizardYieldsValidSetupResult(t *testing.T) {
 	}
 	// The REAL entered secret must be captured verbatim — never the old synthesized
 	// "<key>-secret" placeholder, never empty. A placeholder would break live auth
-	// (Alpaca-live / Coinbase / Tradier all use key+secret).
+	// (Every broker offered by setup uses key+secret.)
 	if res.Brokers[0].Secret != "SKtestbrokersecret456" {
 		t.Errorf("broker secret = %q, want the entered secret %q", res.Brokers[0].Secret, "SKtestbrokersecret456")
 	}
@@ -198,11 +198,10 @@ func TestCompletingWizardYieldsValidSetupResult(t *testing.T) {
 // chat works straight from the saved config with no env vars.
 const happyPathLLMKey = "nvapi-happypathkey123"
 
-// completeHappyPath drives the wizard end to end. goLive toggles a live broker +
-// the explicit live toggle so the live-gating test can reuse it. It exercises a
-// KEY-COLLECTING LLM backend (free Nemotron) so the LLM-key sub-prompt is on the
+// completeHappyPath drives the paper-only wizard end to end. It exercises a
+// key-collecting LLM backend (free Nemotron) so the LLM-key sub-prompt is on the
 // happy path and SetupResult.LLMKey is populated end-to-end.
-func completeHappyPath(t *testing.T, goLive bool) WizardModel {
+func completeHappyPath(t *testing.T) WizardModel {
 	t.Helper()
 	m := NewWizard()
 	m, _ = send(t, m, enter()) // welcome -> telegram
@@ -212,20 +211,13 @@ func completeHappyPath(t *testing.T, goLive bool) WizardModel {
 	m, _ = send(t, m, enter())            // confirm choice -> opens the key sub-prompt
 	m = typeString(t, m, happyPathLLMKey) // paste the free nvapi-... key
 	m, _ = send(t, m, enter())            // key sub-prompt -> broker
-	if goLive {
-		m = typeString(t, m, "2") // Alpaca live
-	} else {
-		m = typeString(t, m, "1") // Alpaca paper
-	}
+	m = typeString(t, m, "1")             // Alpaca paper
 	m = typeString(t, m, "PKtestbrokerkey123")
 	m, _ = send(t, m, enter())                    // broker key -> secret sub-prompt
 	m = typeString(t, m, "SKtestbrokersecret456") // broker secret
 	m, _ = send(t, m, enter())                    // broker -> intake
 	m = answerIntake(t, m)                        // intake -> safety
-	if goLive {
-		m = typeString(t, m, "l") // explicit live toggle
-	}
-	m, _ = send(t, m, enter()) // safety -> done
+	m, _ = send(t, m, enter())                    // safety -> done
 	return m
 }
 
@@ -688,48 +680,17 @@ func TestContradictoryPlaybookIsRejectedAtSafety(t *testing.T) {
 	}
 }
 
-// TestLiveRequiresExplicitToggle proves paper is the default and live is only set
-// when BOTH a live broker is chosen AND the live toggle is pressed.
-func TestLiveRequiresExplicitToggle(t *testing.T) {
-	// Live broker but NO explicit toggle => still paper.
-	m := NewWizard()
-	m, _ = send(t, m, enter())
-	m = typeString(t, m, "123456789:AAH-validlookingtoken")
-	m, _ = send(t, m, enter())
-	m = typeString(t, m, "1")
-	m, _ = send(t, m, enter())
-	m = typeString(t, m, "2") // Alpaca LIVE
-	m = typeString(t, m, "PKtestbrokerkey123")
-	m, _ = send(t, m, enter())                    // key -> secret sub-prompt
-	m = typeString(t, m, "SKtestbrokersecret456") // secret
-	m, _ = send(t, m, enter())
-	m = answerIntake(t, m)
-	m, _ = send(t, m, enter()) // finish WITHOUT toggling live
-	if !m.Done() {
-		t.Fatalf("did not finish; at %v err=%q", m.CurrentStep(), m.Err())
+// TestWizardCannotEnableRealMoney proves the removed shortcut reports the limit
+// and the completed setup remains paper-only.
+func TestWizardCannotEnableRealMoney(t *testing.T) {
+	m := atSafetyPaper(t)
+	m = typeString(t, m, "l")
+	if !strings.Contains(strings.ToLower(m.Err()), "cannot trade real money") {
+		t.Fatalf("former live shortcut must explain the paper-only limit, got %q", m.Err())
 	}
+	m, _ = send(t, m, enter())
 	if m.Result().Live {
-		t.Fatal("live broker without explicit toggle must remain paper (Live=false)")
-	}
-
-	// Live broker WITH explicit toggle => live.
-	m2 := completeHappyPath(t, true)
-	if !m2.Done() {
-		t.Fatalf("live happy path not done; err=%q", m2.Err())
-	}
-	if !m2.Result().Live {
-		t.Fatal("live broker + explicit toggle must yield Live=true")
-	}
-
-	// Paper broker: pressing 'l' must NOT enable live.
-	m3 := atSafetyPaper(t)
-	m3 = typeString(t, m3, "l")
-	if m3.Err() == "" {
-		t.Fatal("toggling live on a paper broker should warn inline")
-	}
-	m3, _ = send(t, m3, enter())
-	if m3.Result().Live {
-		t.Fatal("paper broker can never produce Live=true")
+		t.Fatal("wizard produced Live=true")
 	}
 }
 

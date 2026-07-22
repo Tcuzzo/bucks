@@ -26,30 +26,35 @@ first-timer, switching by who it is talking to.
   breakout) plus a playbook-driven analyst, all behind a risk engine. **BUCKS reads your
   playbook — your risk tolerance, style, and sectors — and builds its OWN watchlist, picks,
   stop distances, and position sizes from it. You don't pick tickers; it's a bot.**
-- **Paper trading on by default.** BUCKS starts in **simulation** with fake money. It only
-  trades real money after you **explicitly** flip it to live — there is no accidental
-  live trading.
-- **Hybrid autonomy (you stay in control).** Inside a per-trade **size/risk band** you
-  set, BUCKS places trades on its own. Anything **bigger than the band** pauses and **asks
-  you to Approve in Telegram** — and waits. If you deny it, or you don't answer, it does
-  **not** place the trade. Fail-safe, always.
-- **Circuit breakers.** A durable kill switch halts trading on a drawdown breach or daily
-  loss limit — and stays halted across a restart until you clear it.
+- **Paper trading only.** BUCKS trades in **simulation** with fake money. It cannot
+  trade real money. Simulated trades are placed on **Alpaca's paper API**; Alpaca live
+  and Tradier connections are **monitor-only** — placement to any real-money venue is
+  refused at multiple layers.
+- **Hybrid autonomy (you stay in control).** Inside a per-trade **size/risk band** sized
+  from the capital you set (auto-trades up to ~5% notional / ~1% risk per trade, with sane
+  floors for small accounts), BUCKS places trades on its own. Anything **bigger than the
+  band** pauses and **asks you to Approve in Telegram** — and waits. If you deny it, or you
+  don't answer, it does **not** place the trade. Fail-safe, always.
+- **Circuit breakers.** A drawdown breach trips a **durable kill switch** — trading stays
+  halted across restarts until you clear it. A separate **daily-loss circuit** stops
+  trading for the rest of the trading day and resets when the daily P&L window rolls over.
 - **Your secrets stay protected.** Your broker keys, Telegram token, and AI keys are
   **encrypted at rest** — in your operating system's keychain when available, or in an
   encrypted file (locked by a passphrase) on a headless server. **Never stored in plain
-  text, never in an environment variable, never committed to a repo.**
+  text, never committed to a repo.** The only env-var paths are explicit opt-ins you
+  set yourself: `BUCKS_PASSPHRASE` to unlock the encrypted file on a headless server,
+  and the optional `BUCKS_CHAT_*` / `BUCKS_TELEGRAM_BOT_TOKEN` overrides.
 
 ---
 
-## Talk to BUCKS (v1.1)
+## Talk to BUCKS
 
 BUCKS isn't just a config screen — you can **talk to him like a person**:
 
-- **Chat — right on the launch screen.** Open BUCKS (just `bucks`) and start typing at the bottom of the dashboard to talk to him — no separate command. (`bucks chat` still gives you a plain terminal chat if you prefer.) He code-switches plain↔technical, stays honest, and **won't invent your account numbers or promise profit** — any figure about your account is grounded against the real numbers. Chat uses the **AI backend you picked in setup** (or the free Nemotron path below), so it works right after the wizard with no extra setup.
+- **Chat — right on the launch screen.** Open BUCKS (just `bucks`) and start typing at the bottom of the dashboard to talk to him — no separate command. (`bucks chat` still gives you a plain terminal chat if you prefer — that REPL is configured by the `BUCKS_CHAT_*` environment variables rather than the wizard.) He code-switches plain↔technical, stays honest, and **won't invent your account numbers or promise profit** — any figure about your account is grounded against the real numbers. The dashboard chat uses the **AI backend you picked in setup** (or the free Nemotron path below), so it works right after the wizard with no extra setup.
 - **Summaries** (`bucks summary`) — a plain-English "here's where you stand" of your P&L, positions, and health, with the numbers checked against reality.
 - **Research** (`bucks research "<topic>"`, `bucks read <url>`) — read-only web lookups for market context, every claim traceable to a cited source. No stray orders, no headless browser — it stays one clean binary.
-- **A free brain** — no Ollama and no paid key? Pick **Free (NVIDIA Nemotron)** at setup, paste a free `nvapi-` key from build.nvidia.com (~2 min, no card), and you're running. Groq / Cerebras / OpenRouter work the same way.
+- **A free brain** — no Ollama and no paid key? Pick **Free (NVIDIA Nemotron)** at setup, paste a free `nvapi-` key from build.nvidia.com (~2 min, no card), and you're running. Groq / Cerebras / OpenRouter are supported too — set `BUCKS_CHAT_PROVIDER=groq|cerebras|openrouter` plus your `BUCKS_CHAT_KEY` (the provider's base URL and model default sensibly; `BUCKS_CHAT_BASEURL` / `BUCKS_CHAT_MODEL` / `BUCKS_CHAT_VOICE` override them).
 
 ## Getting started — the guided unwrap
 
@@ -110,23 +115,44 @@ cd BUCKS_windows_amd64
 
 On first run you'll see the wizard. Answer the questions, and BUCKS connects to your
 broker's **paper** account and reaches **"trading (paper)"** — placing and managing
-simulated trades inside your band. When you're satisfied, you can review going live.
+simulated trades inside your band.
 
-After setup, just run `bucks` (or `bucks.exe`) to open the live dashboard — your
+After setup, just run `bucks` (or `bucks.exe`) to open the trading dashboard — your
 positions and health up top, and a **chat line at the bottom where you can talk to
 BUCKS** right there. Or run it headless under a service manager with `bucks --daemon`
 to reach him from anywhere over Telegram (see **Run BUCKS 24/7** below).
 
 ---
 
-## Going live (deliberately)
+## Commands at a glance
 
-Live trading is a **deliberate flip**, never a default. You connect **live** broker keys and
-arm live mode during setup — and **even then, BUCKS will not place a real-money order until
-you start the session with `bucks --daemon --live`.** Without `--live`, an armed account runs
-in safe **paper / monitor** mode. Saving the arm only *remembers* your intent; going live is
-always a deliberate, per-session choice. Even live, BUCKS only auto-trades **within your band**
-and asks you to approve anything above it, and you can **/halt** everything at any time.
+The full list, exactly as `bucks help` prints it:
+
+| Command | What it does |
+|---|---|
+| `bucks` | Open the trading dashboard (or the first-run setup wizard). Also starts the Telegram gateway while open. |
+| `bucks --daemon` | Run headless under a service manager (always-on Telegram gateway). |
+| `bucks --paper-smoke` | Boot the saved config, place one in-band paper trade, then exit. |
+| `bucks chat` | Talk to BUCKS in a terminal REPL (configured by `BUCKS_CHAT_*` env vars). |
+| `bucks summary` | Plain-English summary of your positions / P&L. |
+| `bucks research "<q>"` / `bucks read <url>` | Read-only, cited web research. |
+| `bucks doctor` | Check updates, Go deps, and vulnerabilities. |
+| `bucks version` | Print the version + build info. |
+| `bucks update [--yes] [--force]` | Update to the latest release (SHA-256 verified). |
+| `bucks logo` | Show the brand mark (alias: `bucks mascot`). |
+
+Flags: `--config <path>` picks a config file; `--chat` is the flag form of `bucks chat`;
+`--live` is rejected with an error (BUCKS cannot trade real money).
+
+## Real-money trading is not supported
+
+BUCKS cannot trade real money. The broker contract cannot make the broker hold and verify
+the protective stop used to calculate position size, and BUCKS has no tested exit path for
+closing an open position. The old `--live` flag is rejected with an error.
+
+Real-money trading must not return until broker adapters provide verified bracket or OCO
+protection at the broker and BUCKS has a tested exit path. Until both exist, use an Alpaca
+paper account.
 
 ---
 
@@ -139,13 +165,14 @@ trader from anywhere on Telegram. Start it with:
 bucks --daemon
 ```
 
-That stands up BUCKS's always-on Telegram gateway **and the trade loop** — it watches your
-account, enforces your drawdown limit and kill switch, and (only when you arm it with
-`--live`) places risk-managed trades; otherwise it runs paper / monitor-only. The **first
+That stands up BUCKS's always-on Telegram gateway **and the paper trade loop** — it watches
+your simulated account, enforces your drawdown limit and kill switch, and places simulated
+trades. It cannot place real-money orders. (The normal `bucks` dashboard starts the Telegram
+gateway too, for as long as the dashboard is open — `--daemon` is for always-on.) The **first
 time you message your bot, that chat becomes the operator and is remembered** — no env var to
 set. Then just message your BUCKS bot:
 
-- **/status** — your trading mode (paper/live), broker, equity, and whether trading is halted
+- **/status** — your paper trading mode, broker, equity, and whether trading is halted
 - **/summary** — your equity and realized / unrealized profit-and-loss
 - **/positions** — your open positions right now
 - **/halt** — stop all trading immediately (it stays stopped, even across a restart)
@@ -256,9 +283,9 @@ For the curious, BUCKS is built like a piece of trading infrastructure, not a sc
   against the broker's own activity stream — its authoritative record of fills and realized
   P&L — on startup and as it runs, so its view stays matched to broker truth. The
   `fsync` order-intent journal and WAL reconcile path are tested durability components, but
-  they are not yet wired into live order placement.
-- **One engine, two clocks.** The same deterministic event engine runs both backtests and live
-  trading, proven by a bit-for-bit replay test — so what you test is what you trade.
+  they are not yet wired into paper order placement.
+- **One engine, two clocks.** The same deterministic event engine runs both backtests and the
+  paper trade loop, proven by a bit-for-bit replay test.
 - **Exact money math.** Prices, sizes, and P&L use fixed-point decimals end to end. No float
   rounding ever touches your money.
 - **One static file.** Pure Go, no C dependencies — a single binary that cross-compiles to
@@ -273,7 +300,8 @@ including a strict race-condition pass.
 
 BUCKS is **MIT licensed** (see `LICENSE`). It links several excellent open-source Go
 libraries, all under permissive licenses — credited in `NOTICE`. A build-time license
-gate **hard-fails on any copyleft (A)GPL/LGPL dependency**, so BUCKS stays cleanly MIT.
+gate **hard-fails on any copyleft or weak-copyleft dependency ((A)GPL, LGPL, MPL, EPL,
+CDDL)**, so BUCKS stays cleanly MIT.
 
 The trading-engine patterns BUCKS uses (a deterministic event kernel, an order durability
 spine, a capability probe) were **studied from the best prior art and re-implemented as

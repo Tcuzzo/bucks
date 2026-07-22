@@ -16,8 +16,8 @@ if (-not (Test-Path $bin)) {
 @'
 BUCKS - a trading agent, a predator not an assistant.
 
-Welcome. BUCKS starts in PAPER mode (simulated money) - going live is a deliberate
-choice you make later. Let's get you set up.
+Welcome. BUCKS trades in PAPER mode with simulated money. It cannot trade real
+money. Let's get you set up.
 '@ | Write-Host
 
 # Offer to install into a user-local apps folder (no admin needed).
