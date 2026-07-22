@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -75,6 +76,7 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 	hasGo := hasGoExe()
 	var finalMods []ModuleStatus
 	var finalVulns []string
+	var vulnScanErr error
 	modulesScanAttempted := false
 	vulnsScanAttempted := false
 
@@ -110,7 +112,9 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 		vulnsScanAttempted = true
 		vulnOut, vulnErr := runGovulncheck()
 		if vulnErr != nil {
+			vulnScanErr = vulnErr
 			fmt.Fprintf(out, "error: %v\n", vulnErr)
+			fmt.Fprintln(out, "\n  Vulnerabilities: unknown / not scanned")
 		} else {
 			vulns := parseGovulncheckVulns(vulnOut)
 			finalVulns = vulns
@@ -150,6 +154,9 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 		if fix || !vulnsScanAttempted {
 			if vulnOut, err := runGovulncheck(); err == nil {
 				finalVulns = parseGovulncheckVulns(vulnOut)
+				vulnScanErr = nil
+			} else {
+				vulnScanErr = err
 			}
 		}
 	}
@@ -158,6 +165,10 @@ func runDoctorCore(ctx context.Context, u *updater.Updater, out io.Writer, fix, 
 		finalMods = append(finalMods, ModuleStatus{Path: "bucks (binary)", Update: rel.Tag})
 	}
 
+	if vulnScanErr != nil {
+		fmt.Fprintf(out, "Summary: vulnerability status unknown / not scanned; scanner error: %v\n", vulnScanErr)
+		return fmt.Errorf("doctor: vulnerability scan incomplete: %w", vulnScanErr)
+	}
 	fmt.Fprintln(out, summarize(finalMods, finalVulns))
 
 	if len(finalVulns) > 0 {
@@ -245,18 +256,24 @@ func parseGovulncheckVulns(jsonStream []byte) []string {
 		Finding *finding `json:"finding"`
 	}
 	type entry struct {
-		Message message `json:"message"`
+		Config  *struct{} `json:"config"`
+		Finding *finding  `json:"finding"`
+		Message message   `json:"message"`
 	}
 
 	seen := map[string]bool{}
 	var result []string
-	for dec.More() {
+	for {
 		var e entry
 		if err := dec.Decode(&e); err != nil {
-			continue
+			break
 		}
-		if e.Message.Finding != nil && e.Message.Finding.OSV != "" {
-			id := e.Message.Finding.OSV
+		f := e.Finding
+		if f == nil {
+			f = e.Message.Finding
+		}
+		if f != nil && f.OSV != "" {
+			id := f.OSV
 			if !seen[id] {
 				seen[id] = true
 				result = append(result, id)
@@ -264,6 +281,50 @@ func parseGovulncheckVulns(jsonStream []byte) []string {
 		}
 	}
 	return result
+}
+
+func validateGovulncheckJSON(jsonStream []byte) error {
+	type config struct {
+		ProtocolVersion string `json:"protocol_version"`
+	}
+	type message struct {
+		Config *config `json:"config"`
+	}
+	type entry struct {
+		Config   *config `json:"config"`
+		Finding  any     `json:"finding"`
+		Progress any     `json:"progress"`
+		SBOM     any     `json:"SBOM"`
+		OSV      any     `json:"osv"`
+		Message  message `json:"message"`
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(jsonStream))
+	count := 0
+	for {
+		var e entry
+		err := dec.Decode(&e)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("invalid or incomplete govulncheck JSON stream: %w", err)
+		}
+		count++
+		if count == 1 {
+			cfg := e.Config
+			if cfg == nil {
+				cfg = e.Message.Config
+			}
+			if cfg == nil || strings.TrimSpace(cfg.ProtocolVersion) == "" {
+				return fmt.Errorf("invalid or incomplete govulncheck JSON stream: first message is not a protocol-bearing config")
+			}
+		}
+	}
+	if count == 0 {
+		return fmt.Errorf("invalid or incomplete govulncheck JSON stream: empty output")
+	}
+	return nil
 }
 
 // versionOutdated reports whether current is older than latest.
@@ -437,15 +498,25 @@ func runGovulncheck() ([]byte, error) {
 			return nil, fmt.Errorf("govulncheck installed but still not found — add $(go env GOPATH)/bin to PATH")
 		}
 	}
-	// govulncheck exit code 3 means findings exist; that's not an exec error.
+	// Current govulncheck JSON mode exits 0 even when findings exist. Older
+	// releases may use 3 for findings; retain that narrow compatibility only
+	// when the output is a complete JSON stream containing a finding.
 	cmd := exec.Command(exe, "-json", "./...")
 	out, err := cmd.Output()
 	if err != nil {
-		// exitError with findings is OK — we parse the JSON ourselves.
-		if _, ok := err.(*exec.ExitError); ok {
-			return out, nil
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return nil, fmt.Errorf("govulncheck execution failed: %w", err)
 		}
+		if exitErr.ExitCode() != 3 {
+			return nil, fmt.Errorf("govulncheck failed with exit code %d: %s", exitErr.ExitCode(), strings.TrimSpace(string(exitErr.Stderr)))
+		}
+	}
+	if err := validateGovulncheckJSON(out); err != nil {
 		return nil, err
+	}
+	if err != nil && len(parseGovulncheckVulns(out)) == 0 {
+		return nil, fmt.Errorf("govulncheck exited with findings code 3 but emitted no findings")
 	}
 	return out, nil
 }
