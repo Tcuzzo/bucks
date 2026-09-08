@@ -18,10 +18,12 @@ number against your band. Above the band, the order does not go anywhere — it 
 your phone and waits for your tap. No tap, no trade. The model does not get a vote on
 that, and it cannot talk its way past it, because the band is code, not instruction.
 
-That line is the **Reflex Seam**, and in a trading agent it is the only thing that
-matters. A hallucination in a chatbot is an annoying answer. A hallucination in a
-trading agent is a casualty. So the harness stops bad logic **before** it crosses the
-execution boundary, not after.
+That line is the **Reflex Seam**, and in a trading agent it is the thing that matters
+most. A hallucination in a chatbot is an annoying answer. A hallucination in a trading
+agent moves money. BUCKS trades on paper only and refuses live trading outright, so
+nothing here can cost you a dollar today — but the harness is built as though it could.
+Bad logic is stopped **before** it crosses the execution boundary, not after: the
+circuit breakers and the approval gate sit between the model's judgment and any order.
 
 Two rules ride along. **No mock theater:** the tests fake the broker and the network,
 and nothing else — the money math, the journal, and the breakers are tested for real
