@@ -130,14 +130,28 @@ func claimSupported(c Claim, evidence map[string]string) bool {
 	if !ok {
 		return false
 	}
-	val = strings.TrimSpace(val)
-	if val == "" {
-		return false
-	}
 	// The real value's token sequence must appear as a whole-token run in the
 	// claim text — guards against citing a real key but stating a different
 	// (fabricated) number, and against a digit fragment matching a larger number.
-	return tokensContainSubsequence(tokenize(c.Text), tokenize(val))
+	return EvidenceSupports(c.Text, val)
+}
+
+// EvidenceSupports reports whether value appears in text as a WHOLE TOKEN (or a
+// whole consecutive run of tokens) — the token-boundary match that makes BUCKS's
+// grounding real rather than a substring guess: evidence "1" can never verify the
+// claim "RSI is 100", and "2" can never verify "2.31". An empty (or
+// whitespace-only) value never supports anything.
+//
+// This is the single grounding primitive behind claimSupported. It is exported so
+// any surface that must check "did the model cite something that actually EXISTS in
+// the source it was handed?" reuses the ONE honesty engine instead of writing a
+// second, subtly different matcher.
+func EvidenceSupports(text, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	return tokensContainSubsequence(tokenize(text), tokenize(value))
 }
 
 // AllVerified reports whether a grounded view has no unverified claims. It is a

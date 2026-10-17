@@ -77,6 +77,10 @@ until two things exist — broker adapters that provide verified bracket or OCO 
 contract cannot guarantee it holds the protective stop that the position size was
 calculated from. Shipping real-money trading without that is how people get hurt.
 
+## Build understanding
+
+- **Understanding** (`bucks understand <file> "<what it should do>"`) — point it at a file, tell it what that file was *supposed* to do, and it grades the gap: five dimensions (spec adherence, architectural fit, type safety, testability, security) scored 0-4, totalled 0-100, with named failures and concrete fixes. **It is built to disagree with you.** The model never gets a vote on the conclusion — it supplies evidence, and a fixed rubric decides `APPROVED` (≥80) / `REVISE` (60-79) / `REJECT` (<60), so a model that stamps "approved" over failing scores is ignored. Every failure has to quote real text from your file; quote something that isn't there and the finding is flagged unverified rather than passed off as fact. With no AI backend configured it says **UNAVAILABLE — explicitly not a pass**, never a quiet thumbs-up. It is **advisory**: it grades *builds*, never trades. Two money packages (orders, risk) genuinely cannot import it — the compiler refuses. For the rest of the money path a test fails the build if the import ever appears, so it is caught in CI rather than by the compiler.
+
 ## How it fits
 
 BUCKS is the high-stakes member of a family of local-first, operator-owned agents.

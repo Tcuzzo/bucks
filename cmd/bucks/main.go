@@ -50,16 +50,17 @@ func main() {
 // the alias of `logo`. Keep this in lockstep with the dispatch checks below and the
 // help text in runHelp.
 var knownSubcommands = map[string]bool{
-	"chat":     true,
-	"summary":  true,
-	"research": true,
-	"read":     true,
-	"doctor":   true,
-	"logo":     true,
-	"mascot":   true,
-	"version":  true,
-	"update":   true,
-	"help":     true,
+	"chat":       true,
+	"summary":    true,
+	"research":   true,
+	"read":       true,
+	"understand": true,
+	"doctor":     true,
+	"logo":       true,
+	"mascot":     true,
+	"version":    true,
+	"update":     true,
+	"help":       true,
 }
 
 // run parses flags and dispatches. It is split out from main so the dispatch is
@@ -120,6 +121,14 @@ func run(args []string) error {
 			url = args[1]
 		}
 		return runReadStdio(url)
+	}
+
+	// `bucks understand <file> "<intent>"` — grade a candidate against the intent it
+	// was supposed to satisfy and print the evidence (scores, failures, fixes). Like
+	// chat it uses the BUCKS_CHAT_* env backend; with none it prints setup guidance
+	// (no crash). ADVISORY: it grades BUILDS, never trades, and blocks nothing.
+	if len(args) > 0 && args[0] == "understand" {
+		return runUnderstandStdio(args[1:])
 	}
 
 	// `bucks doctor` — inspect the installed/source checkout for update and

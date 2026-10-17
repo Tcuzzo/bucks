@@ -71,9 +71,16 @@ func envChatter() (*chat.Chatter, error) {
 // when nothing is configured (the clean no-backend case). It builds NO network
 // connection — construction is offline; only a later Complete/Say hits the wire.
 //
-// This is the SINGLE backend-selection seam shared by chat and summary so the two
-// commands can never drift in how they pick a provider.
-func envChatBackend() (analyst.Backend, error) {
+// This is the SINGLE backend-selection seam shared by chat, summary, research, and
+// understand, so the commands can never drift in how they pick a provider.
+//
+// opts tune the OpenAI-compatible request for a caller with different needs — e.g.
+// `bucks understand` raises the completion budget with analyst.WithMaxTokens
+// because a reasoning model must think AND emit a long structured payload. They
+// apply ONLY to the OpenAI-compatible path: the Ollama /api/generate shape sends no
+// max_tokens at all, so there is no equivalent knob to set (its provider default
+// applies, which is not the tight budget an OpenAI-compat request carries).
+func envChatBackend(opts ...analyst.Option) (analyst.Backend, error) {
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv(envChatProvider)))
 	baseURL := strings.TrimSpace(os.Getenv(envChatBaseURL))
 	key := strings.TrimSpace(os.Getenv(envChatKey))
@@ -105,7 +112,7 @@ func envChatBackend() (analyst.Backend, error) {
 			// An explicit base URL overrides the profile (advanced/self-hosted).
 			profile.BaseURL = baseURL
 		}
-		return analyst.NewOpenAICompatBackend(profile, key, model), nil
+		return analyst.NewOpenAICompatBackend(profile, key, model, opts...), nil
 	}
 }
 
