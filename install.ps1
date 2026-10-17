@@ -14,7 +14,7 @@ $repo = 'Tcuzzo/bucks'
 $base = "https://github.com/$repo/releases/latest/download"
 
 Write-Host 'BUCKS installer'
-Write-Host 'PAPER mode by default, going live is your choice.'
+Write-Host 'Paper trading only. bucks cannot place real-money orders.'
 Write-Host ''
 
 # ---- detect arch ------------------------------------------------------------

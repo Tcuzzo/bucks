@@ -2,7 +2,7 @@
 // the bubbletea models to the real terminal and chooses which one to boot:
 //
 //   - no config on disk  -> the guided-unpack wizard (first run);
-//   - config present      -> the live dashboard;
+//   - config present      -> the trading dashboard;
 //   - --daemon            -> headless (no TUI), for running under a service
 //     manager where there is no terminal to attach.
 //
@@ -151,10 +151,13 @@ func run(args []string) error {
 	daemon := fs.Bool("daemon", false, "run headless (no TUI) under a service manager")
 	paperSmoke := fs.Bool("paper-smoke", false, "boot the saved config into a paper trader and place one in-band paper trade (offline acceptance), then exit")
 	chatFlag := fs.Bool("chat", false, "open the conversational REPL — talk to BUCKS like a person (backend via BUCKS_CHAT_PROVIDER or BUCKS_CHAT_BASEURL/_KEY/_MODEL)")
-	live := fs.Bool("live", false, "arm REAL-MONEY live trading this session (default: paper / monitor-only)")
+	live := fs.Bool("live", false, "unsupported: bucks cannot trade real money; remove this flag")
 	configPath := fs.String("config", defaultConfigPath(), "path to the BUCKS config file")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *live {
+		return errors.New("--live is no longer supported: bucks cannot trade real money. Remove --live and use an Alpaca paper account")
 	}
 
 	if *chatFlag {
@@ -175,7 +178,7 @@ func run(args []string) error {
 		// no TTY attached, and shut down gracefully on Ctrl-C / SIGTERM. runDaemonProcess
 		// installs the signal-aware context and runs the long-poll loop until a signal.
 		fmt.Println("bucks: running headless (daemon) — no TUI attached")
-		return runDaemonProcess(*configPath, *live)
+		return runDaemonProcess(*configPath, false)
 	}
 
 	// The single, real entry-point selection: a present config opens the live
@@ -226,7 +229,7 @@ func runWizard(configPath string) error {
 	return nil
 }
 
-// runDashboard boots the live dashboard against the real terminal, OPENED on the
+// runDashboard boots the trading dashboard against the real terminal, opened on the
 // owner's saved setup (mode, account equity from the playbook, flat positions). It
 // LoadSetup's the persisted config and seeds the model with an initial snapshot so the
 // dashboard shows real loaded state, not an empty stub. A load error (e.g. wrong

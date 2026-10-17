@@ -59,7 +59,8 @@ type Health struct {
 	// Backend is the reasoning backend currently in use (e.g. "oauth-gpt"), so the
 	// owner can see which brain is steering.
 	Backend string
-	// Live is true when trading real money, false for paper (the safe state).
+	// Live is a legacy saved value. When true, the UI labels real money disabled;
+	// current setup and trade-loop construction keep it false.
 	Live bool
 	// LastHeartbeat is the trader's clock value at its last liveness pulse; the
 	// dashboard derives freshness from it against the snapshot's Now (no wall clock
@@ -248,7 +249,7 @@ func (m DashboardModel) View() string {
 	// render every frame, and keeps the never-stall invariant.
 	b.WriteString(RenderBanner())
 	b.WriteString("\n")
-	b.WriteString(m.styles.header.Render("$ BUCKS — live dashboard"))
+	b.WriteString(m.styles.header.Render("$ BUCKS — trading dashboard"))
 	b.WriteString("\n\n")
 
 	if !m.haveSnap {

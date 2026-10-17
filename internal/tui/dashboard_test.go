@@ -116,9 +116,9 @@ func TestDashboardSurfacesHalt(t *testing.T) {
 	if !strings.Contains(v, "daily-loss circuit breaker tripped") {
 		t.Errorf("halt reason not surfaced:\n%s", v)
 	}
-	// A live trader at halt should still show LIVE mode (real money was armed).
-	if !strings.Contains(v, "LIVE (real money)") {
-		t.Errorf("live mode label not surfaced:\n%s", v)
+	// A legacy live value must not claim that real-money trading works.
+	if !strings.Contains(v, "REAL MONEY DISABLED (legacy config)") {
+		t.Errorf("legacy live value was not labeled as disabled:\n%s", v)
 	}
 	// A 5-minute-old heartbeat is past the 90s threshold => STALE.
 	if !strings.Contains(v, "STALE") {
