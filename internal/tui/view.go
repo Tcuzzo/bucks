@@ -243,14 +243,12 @@ func (m WizardModel) View() string {
 			b.WriteString("  secret > " + mask(m.input) + "\n")
 			b.WriteString(m.styles.hint.Render("  type secret   [enter] save   [esc] re-enter key\n"))
 		} else {
-			b.WriteString(m.styles.prompt.Render("Pick a broker, then paste its API key:"))
+			b.WriteString(m.styles.prompt.Render("Connect an Alpaca paper account, then paste its API key:"))
 			b.WriteString("\n")
 			b.WriteString(choiceLine("1", "Alpaca — PAPER (safe default)", m.brokerKind == BrokerAlpacaPaper))
-			b.WriteString(choiceLine("2", "Alpaca — LIVE (real money)", m.brokerKind == BrokerAlpacaLive))
-			b.WriteString(choiceLine("3", "Coinbase", m.brokerKind == BrokerCoinbase))
-			b.WriteString(choiceLine("4", "Tradier", m.brokerKind == BrokerTradier))
+			b.WriteString(m.styles.hint.Render("  BUCKS cannot trade real money. Live broker accounts are not supported.\n"))
 			b.WriteString("  key > " + mask(m.input) + "\n")
-			b.WriteString(m.styles.hint.Render("  [1-4] pick   type key   [enter] next   [esc] back\n"))
+			b.WriteString(m.styles.hint.Render("  [1] paper account   type key   [enter] next   [esc] back\n"))
 		}
 	case StepIntake:
 		b.WriteString(m.intakeView())
@@ -293,23 +291,15 @@ func (m WizardModel) intakeView() string {
 	return b.String()
 }
 
-// safetyView renders the final paper/live confirmation. Paper is shown in green as
-// the safe default; live in red so the owner cannot miss that real money is armed.
+// safetyView confirms the paper-only setup. Real-money choices never reach this
+// screen from the wizard.
 func (m WizardModel) safetyView() string {
 	var b strings.Builder
 	b.WriteString(m.styles.prompt.Render("Final check — how should BUCKS trade?"))
 	b.WriteString("\n")
-	if m.live && m.brokerKind.isLive() {
-		b.WriteString("  Mode: " + m.styles.bad.Render("LIVE — real money") + "\n")
-	} else {
-		b.WriteString("  Mode: " + m.styles.good.Render("PAPER — simulated (safe)") + "\n")
-	}
+	b.WriteString("  Mode: " + m.styles.good.Render("PAPER — simulated") + "\n")
 	b.WriteString(fmt.Sprintf("  Broker: %s\n", m.brokerKind))
-	if m.brokerKind.isLive() {
-		b.WriteString(m.styles.hint.Render("  [l] toggle LIVE/paper   [enter] finish   [esc] back\n"))
-	} else {
-		b.WriteString(m.styles.hint.Render("  paper broker selected — live is off by default   [enter] finish   [esc] back\n"))
-	}
+	b.WriteString(m.styles.hint.Render("  BUCKS cannot trade real money.   [enter] finish   [esc] back\n"))
 	return b.String()
 }
 
@@ -353,7 +343,7 @@ func onOff(b bool) string {
 
 func modeLabel(live bool) string {
 	if live {
-		return "LIVE (real money)"
+		return "REAL MONEY DISABLED (legacy config)"
 	}
 	return "PAPER (simulated)"
 }

@@ -23,7 +23,7 @@ Money math:
   github.com/govalues/decimal                  MIT          (zero-alloc fixed-point decimal — BUCKS's money type)
   github.com/shopspring/decimal                MIT          (decimal, used by a dependency)
 
-Terminal UI (the guided-unpack wizard + live dashboard):
+Terminal UI (the guided-unpack wizard + trading dashboard):
   github.com/charmbracelet/bubbletea           MIT
   github.com/charmbracelet/lipgloss            MIT
   github.com/charmbracelet/colorprofile        MIT
@@ -81,6 +81,7 @@ Standard-library extensions & misc (all permissive):
   github.com/kr/text                           MIT
   golang.org/x/sync                            BSD-3-Clause
   golang.org/x/sys                             BSD-3-Clause
+  golang.org/x/term                            BSD-3-Clause  (no-echo passphrase prompt)
   golang.org/x/text                            BSD-3-Clause
   cloud.google.com/go                          Apache-2.0    (pulled by an indirect dependency)
 

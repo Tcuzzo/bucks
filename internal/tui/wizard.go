@@ -1,5 +1,5 @@
 // Package tui is BUCKS's cross-platform terminal UI: a guided-unpack wizard that
-// walks a new owner through first-run setup, and a live dashboard that shows the
+// walks a new owner through first-run setup, and a trading dashboard that shows the
 // trader's positions, P&L, and health at a glance. Both are bubbletea models —
 // pure (Init/Update/View) state machines with NO terminal, network, or disk
 // coupling in their logic, so they run and are tested identically on Linux and
@@ -50,8 +50,7 @@ const (
 	// StepIntake — walk playbook.DefaultIntake() questions and collect answers,
 	// validating each against its Question.Validate before advancing.
 	StepIntake
-	// StepSafety — final confirm. Paper trading is ON by default; going live needs
-	// an explicit, deliberate toggle (no accidental live trading).
+	// StepSafety — final confirmation that this setup uses simulated money.
 	StepSafety
 	// StepDone — the wizard is complete and Result() is final.
 	StepDone
@@ -149,7 +148,8 @@ const (
 	BrokerAlpacaPaper BrokerKind = "alpaca-paper"
 	// BrokerAlpacaLive is Alpaca's live (real-money) environment.
 	BrokerAlpacaLive BrokerKind = "alpaca-live"
-	// BrokerCoinbase is the Coinbase crypto venue.
+	// BrokerCoinbase identifies legacy saved configurations. Setup does not offer
+	// it because cmd/bucks has no production ES256 signer.
 	BrokerCoinbase BrokerKind = "coinbase"
 	// BrokerTradier is the Tradier equities/options venue.
 	BrokerTradier BrokerKind = "tradier"
@@ -157,7 +157,7 @@ const (
 
 func (b BrokerKind) valid() bool {
 	switch b {
-	case BrokerAlpacaPaper, BrokerAlpacaLive, BrokerCoinbase, BrokerTradier:
+	case BrokerAlpacaPaper, BrokerAlpacaLive, BrokerTradier:
 		return true
 	default:
 		return false
@@ -166,8 +166,8 @@ func (b BrokerKind) valid() bool {
 
 // IsRealMoney reports whether this broker is a real-money venue — any venue where
 // an order moves actual funds. Only Alpaca's paper environment is simulated; every
-// other venue (Alpaca live, Coinbase, Tradier) trades the owner's real money and
-// must get the full live-arm treatment.
+// other recognized venue trades the owner's real money and is refused by the
+// trade-loop construction gate. Coinbase remains recognized for legacy configs.
 func (b BrokerKind) IsRealMoney() bool {
 	return b == BrokerAlpacaLive || b == BrokerCoinbase || b == BrokerTradier
 }
@@ -205,8 +205,8 @@ type SetupResult struct {
 	Brokers []BrokerCreds
 	// Playbook is the validated owner mandate built from the intake answers.
 	Playbook playbook.Playbook
-	// Live is true only if the owner explicitly toggled live trading on; paper
-	// (Live == false) is the default and the safe state.
+	// Live is retained for reading legacy saved configurations. The current wizard
+	// always writes false because bucks cannot trade real money.
 	Live bool
 }
 
@@ -236,7 +236,7 @@ type WizardModel struct {
 	// the broker step does NOT advance — it switches to collecting the API secret
 	// (a second masked prompt). Only a valid secret advances off StepBroker. This
 	// keeps the outer Step order intact while collecting the REAL key+secret pair
-	// every live venue (Alpaca-live, Coinbase, Tradier) needs to authenticate.
+	// every offered venue needs to authenticate.
 	brokerSecretPhase bool
 	live              bool
 
@@ -496,7 +496,7 @@ func (m WizardModel) updateLLMKey(k tea.KeyMsg) WizardModel {
 
 // updateBroker collects, in two sequential masked prompts, the REAL API key AND
 // the REAL API secret for the chosen broker — both are required to authenticate at
-// every live venue (Alpaca-live, Coinbase, Tradier all use key+secret). The owner
+// every offered venue. The owner
 // first picks a broker and types the key; on a valid key the step does NOT advance,
 // it switches to the secret sub-prompt (brokerSecretPhase). Only a valid secret
 // advances off StepBroker. The entered secret is stored verbatim — never synthesized
@@ -514,23 +514,15 @@ func (m WizardModel) updateBroker(k tea.KeyMsg) WizardModel {
 			m.brokerKind = BrokerAlpacaPaper
 			m.errMsg = ""
 			return m
-		case "2":
-			m.brokerKind = BrokerAlpacaLive
-			m.errMsg = ""
-			return m
-		case "3":
-			m.brokerKind = BrokerCoinbase
-			m.errMsg = ""
-			return m
-		case "4":
-			m.brokerKind = BrokerTradier
-			m.errMsg = ""
+		case "2", "3":
+			m.brokerKind = BrokerAlpacaPaper
+			m.errMsg = "BUCKS cannot trade real money. Use option 1 with an Alpaca paper account."
 			return m
 		}
 	}
 	if k.Type == tea.KeyEnter {
 		if !m.brokerKind.valid() {
-			m.errMsg = "Pick a broker: 1) Alpaca paper  2) Alpaca live  3) Coinbase  4) Tradier."
+			m.errMsg = "Pick option 1: Alpaca paper. BUCKS cannot trade real money."
 			return m
 		}
 		key := strings.TrimSpace(m.input)
@@ -543,12 +535,8 @@ func (m WizardModel) updateBroker(k tea.KeyMsg) WizardModel {
 			return m
 		}
 		m.brokerKey = key
-		// Key accepted — switch to the secret sub-prompt WITHOUT advancing the step.
-		// A live broker selection arms (but does not enable) live trading; the owner
-		// must still explicitly toggle it ON at the safety step.
-		if m.brokerKind.isLive() {
-			m.live = false
-		}
+		// Key accepted — switch to the secret sub-prompt without advancing.
+		m.live = false
 		m.brokerSecretPhase = true
 		m.input = ""
 		m.errMsg = ""
@@ -611,19 +599,13 @@ func (m WizardModel) updateIntake(k tea.KeyMsg) WizardModel {
 	return m
 }
 
-// updateSafety: 'l' toggles live (only meaningful with a live broker; on a paper
-// broker it stays paper and warns), enter finalizes by BUILDING the playbook from
-// the collected answers. If the playbook fails to build, the error is shown inline
-// and the wizard stays on safety (never emits a bad SetupResult).
+// updateSafety finalizes a paper-only setup. The former 'l' shortcut now explains
+// that real-money trading is not supported. If the playbook fails to build, the
+// error is shown inline and the wizard stays on safety.
 func (m WizardModel) updateSafety(k tea.KeyMsg) WizardModel {
 	if k.Type == tea.KeyRunes && strings.EqualFold(string(k.Runes), "l") {
-		if !m.brokerKind.isLive() {
-			m.live = false
-			m.errMsg = "Live trading needs a live broker (you chose " + string(m.brokerKind) + "). Go back and pick a live broker to enable it."
-			return m
-		}
-		m.live = !m.live
-		m.errMsg = ""
+		m.live = false
+		m.errMsg = "BUCKS cannot trade real money. This setup remains on paper."
 		return m
 	}
 	if k.Type == tea.KeyEnter {
@@ -644,9 +626,7 @@ func (m WizardModel) updateSafety(k tea.KeyMsg) WizardModel {
 				Secret: m.brokerSecret,
 			}},
 			Playbook: pb,
-			// A live broker AND an explicit toggle are BOTH required to go live;
-			// either missing => paper. This is the safety default.
-			Live: m.live && m.brokerKind.isLive(),
+			Live:     false,
 		}
 		m.done = true
 		return m.advance() // -> StepDone
