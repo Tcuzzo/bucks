@@ -54,7 +54,7 @@ Capability-probe (broker OpenAPI/docs parsing):
   github.com/dustin/go-humanize                MIT
   github.com/josharian/intern                  MIT
   github.com/mailru/easyjson                   MIT
-  go.yaml.in/yaml/v4                           Apache-2.0
+  github.com/pb33f/go-yaml                     Apache-2.0
 
 Config / serialization:
   gopkg.in/yaml.v3                             MIT
