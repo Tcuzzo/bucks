@@ -48,19 +48,19 @@ import (
 // can never fabricate positions or P&L.
 type daemonCommandContext struct {
 	ks      *risk.KillSwitch
-	mode    string         // "paper" or "live", from the loaded setup
+	mode    string         // "paper" or an explicit disabled-legacy-config label
 	broker  string         // the configured broker kind, from the loaded setup
 	capital orders.Decimal // the playbook capital (account equity until the live loop reports real equity)
 }
 
 // newDaemonCommandContext builds the live command context from the durable kill switch and
-// the loaded setup. Mode is paper unless the setup armed live; broker is the first
-// configured broker kind; capital is the playbook capital (the honest equity figure until
-// a live feed exists).
+// the loaded setup. A legacy Live value is labeled disabled rather than presented
+// as active real-money trading. Broker is the first configured broker kind; capital
+// is the playbook capital until the paper loop reports account equity.
 func newDaemonCommandContext(ks *risk.KillSwitch, r tui.SetupResult) *daemonCommandContext {
 	mode := "paper"
 	if r.Live {
-		mode = "live"
+		mode = "real money disabled (legacy config)"
 	}
 	broker := ""
 	if len(r.Brokers) > 0 {
@@ -122,7 +122,7 @@ type daemonConfig struct {
 	httpClient  *http.Client     // overrides the default client (tests inject srv.Client())
 	logw        io.Writer        // where the plain start/stop lines go (defaults to os.Stdout)
 	secretOpts  []secrets.Option // secrets-store backend opts; empty in prod (keychain), ForceFileBackend in tests
-	confirmLive bool             // --live: arm a REAL-MONEY venue this session (default false = paper/monitor-only)
+	confirmLive bool             // legacy test seam; real-money construction refuses either value
 }
 
 // DaemonOption configures runDaemon's injectable seams.
@@ -168,8 +168,8 @@ func withSecretOpts(opts ...secrets.Option) DaemonOption {
 	}
 }
 
-// withConfirmLive sets the per-session real-money confirmation (the --live flag). Default
-// false keeps a live-configured trader in SAFE monitor/paper mode until deliberately armed.
+// withConfirmLive preserves the old test seam. Real-money construction refuses both
+// values; the public --live flag is rejected before the daemon starts.
 func withConfirmLive(v bool) DaemonOption {
 	return func(c *daemonConfig) { c.confirmLive = v }
 }
@@ -223,11 +223,11 @@ func runDaemon(ctx context.Context, configPath string, opts ...DaemonOption) err
 		return err
 	}
 
-	// 5. Start the trade loop in the background so the saved keys are actually USED: it watches
-	//    the real account, enforces the drawdown gate + the operator's kill switch (the SAME ks
+	// 5. Start the paper trade loop in the background. It watches the paper account,
+	//    enforces the drawdown gate + the operator's kill switch (the SAME ks
 	//    the gateway's /halt trips — they must share one instance, since IsHalted reads in-memory
-	//    state), and — once a trading policy is configured — places risk-managed orders.
-	//    Monitor-only + paper by default; real money ONLY with --live. It routes alerts/approvals
+	//    state), and places simulated, risk-managed orders. Real-money configurations
+	//    are refused before broker construction. It routes alerts/approvals
 	//    through the gateway's channel (no second poller). Stopped when the daemon shuts down.
 	var loopCh channel.Channel = channel.NewMockChannel()
 	if asm.channel != nil {

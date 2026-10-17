@@ -18,8 +18,8 @@ fi
 cat <<'BANNER'
 BUCKS — a trading agent, a predator not an assistant.
 
-Welcome. BUCKS starts in PAPER mode (simulated money) — going live is a deliberate
-choice you make later. Let's get you set up.
+Welcome. BUCKS trades in PAPER mode with simulated money. It cannot trade real
+money. Let's get you set up.
 BANNER
 
 # Offer to install onto PATH (~/.local/bin), else run in place. Never sudo silently.

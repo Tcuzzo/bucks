@@ -198,19 +198,15 @@ type TraderConfig struct {
 	// call). Callers typically set a real cadence.
 	ReportEvery time.Duration
 
-	// LiveEnabled gates LIVE trading. It defaults false: the explicit, audited
-	// switch the operator flips, and the loop records whether it ran live. Paper is
-	// the default by construction. Real-money enforcement is TWO layers: the loop
-	// wiring never builds a real-money trader without the per-session confirmation
-	// (layer one), and placeOnBroker refuses to place when RealMoneyVenue is set
-	// without this flag (layer two, placement time).
+	// LiveEnabled is the internal placement-gate value. It defaults false, and
+	// cmd/bucks never constructs a real-money trader.
 	LiveEnabled bool
 
 	// RealMoneyVenue records that Broker is wired to a venue where an order moves
-	// ACTUAL funds (alpaca-live, coinbase, tradier — tui.BrokerKind.IsRealMoney).
+	// actual funds.
 	// It arms the placement-time guard: RealMoneyVenue && !LiveEnabled means every
-	// placement is refused loudly, so even a wiring bug upstream can never send a
-	// real order without the explicit live arm.
+	// placement is refused loudly. This is defense in depth behind cmd/bucks' earlier
+	// refusal of every real-money broker.
 	RealMoneyVenue bool
 
 	// ApprovalTimeout bounds how long an above-band approval waits before the
@@ -262,7 +258,8 @@ func NewTrader(cfg TraderConfig) (*Trader, error) {
 	return &Trader{cfg: cfg}, nil
 }
 
-// LiveEnabled reports whether live trading is on (false = paper, the default).
+// LiveEnabled reports the internal placement-gate value. Bucks' production
+// construction path keeps it false for real-money venues.
 func (t *Trader) LiveEnabled() bool { return t.cfg.LiveEnabled }
 
 // Tick processes ONE trade decision through the full hybrid-autonomy path and
@@ -467,21 +464,17 @@ func (t *Trader) placeAboveBand(ctx context.Context, base TradeRecord, p risk.Or
 	return rec, nil
 }
 
-// placeOnBroker submits the order to the broker. It is the LAST line of the
-// two-layer real-money enforcement: layer one is the loop wiring (a real-money
-// venue is never even built without the explicit per-session confirmation), and
-// layer two is HERE — a Broker wired to a real-money venue (RealMoneyVenue) with
-// live trading not enabled (LiveEnabled=false) is REFUSED loudly before the order
-// can reach the venue, so no upstream bug can move actual funds without the arm.
-// The order is a market order keyed by the deterministic clOrdID (idempotent at
-// the venue).
+// placeOnBroker submits the order to the broker. It refuses a broker marked as
+// RealMoneyVenue when LiveEnabled is false. Real-money loop construction is
+// separately disabled in cmd/bucks while venue-side protection and an exit path
+// are unavailable.
 // It returns placed=true once the order reaches the broker, err!=nil ONLY for a
 // genuine placement failure (the order never reached the venue). Fill accounting
 // is intentionally NOT done here; the broker activity-stream reconciler is the
 // single authoritative realized-P&L path, including this bot's own fills.
 func (t *Trader) placeOnBroker(ctx context.Context, clOrdID string, p risk.OrderProposal) (placed bool, err error) {
 	if t.cfg.RealMoneyVenue && !t.cfg.LiveEnabled {
-		return false, fmt.Errorf("harness: refusing to place order %s: broker is a REAL-MONEY venue but live trading is not enabled (LiveEnabled=false) — a real order is never placed without the explicit live arm", clOrdID)
+		return false, fmt.Errorf("harness: refusing to place order %s: broker is a REAL-MONEY venue and bucks cannot trade real money (LiveEnabled=false)", clOrdID)
 	}
 	req := brokers.OrderRequest{
 		ClOrdID: clOrdID,

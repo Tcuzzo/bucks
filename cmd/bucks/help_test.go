@@ -53,6 +53,30 @@ func TestRunHelp_NamesFreeHostedChatProvider(t *testing.T) {
 	}
 }
 
+func TestRunHelpSaysLiveCannotEnableRealMoneyTrading(t *testing.T) {
+	var out bytes.Buffer
+	if err := runHelp(&out); err != nil {
+		t.Fatalf("runHelp: %v", err)
+	}
+	got := strings.ToLower(out.String())
+	if strings.Contains(got, "arm real-money") || !strings.Contains(got, "cannot trade real money") {
+		t.Fatalf("--live help must state that real-money trading is unavailable; output:\n%s", out.String())
+	}
+}
+
+func TestRunRejectsLiveFlagWithActionableMessage(t *testing.T) {
+	err := run([]string{"--live"})
+	if err == nil {
+		t.Fatal("--live must be rejected")
+	}
+	got := strings.ToLower(err.Error())
+	for _, want := range []string{"--live", "cannot trade real money", "remove"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("--live error missing %q: %v", want, err)
+		}
+	}
+}
+
 // TestHelpDispatch_ExitsZero proves `bucks help`, `bucks --help`, and `bucks -h` all
 // route through run() to the help text and return nil (exit 0). It also asserts the
 // help printed contains each command name (the discoverability requirement).
