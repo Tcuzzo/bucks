@@ -48,6 +48,7 @@ var KnownLicenses = map[string]string{
 	"github.com/xo/terminfo":                "MIT",
 
 	// --- openapi / json stack ---
+	"github.com/pb33f/go-yaml":         "Apache-2.0", // v0.1.1 LICENSE verified
 	"github.com/pb33f/jsonpath":        "Apache-2.0",
 	"github.com/pb33f/ordered-map/v2":  "Apache-2.0",
 	"github.com/bahlo/generic-list-go": "BSD-3-Clause",
