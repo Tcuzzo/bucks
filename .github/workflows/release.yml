@@ -12,12 +12,21 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: '1.26.x'
+          check-latest: true
+
+      - name: Verify dependency checksums and manifest consistency
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy -diff
+          git diff --exit-code -- go.mod go.sum
 
       - name: Secret scan
         run: bash dist/secret_scan.sh .

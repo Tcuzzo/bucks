@@ -7,7 +7,19 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 5
+    rebase-strategy: "auto"
+    groups:
+      go-compatible-updates:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 5
+    rebase-strategy: "auto"
+    groups:
+      actions-compatible-updates:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
