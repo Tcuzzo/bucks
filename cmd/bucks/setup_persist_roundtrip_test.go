@@ -9,11 +9,8 @@ import (
 	"bucks/internal/tui"
 )
 
-// liveArmedSetupResult is the SetupResult an owner produces when they configure a LIVE
-// Alpaca broker, turn voice on, and explicitly arm live trading. Its live-arm and voice
-// preference MUST survive persistence — otherwise the owner's deliberate, real-money "go
-// live" choice is silently thrown away on save and they come back up on paper without
-// being told (the operator-reported "setup doesn't save for live trading" gap).
+// liveArmedSetupResult models a legacy saved configuration. The current wizard
+// cannot produce it, but loading old encrypted files must remain compatible.
 func liveArmedSetupResult(t *testing.T) tui.SetupResult {
 	t.Helper()
 	pb, err := playbook.BuildPlaybook(map[string]string{
@@ -36,17 +33,12 @@ func liveArmedSetupResult(t *testing.T) tui.SetupResult {
 			Secret: "LIVESECRET-xyz67890",
 		}},
 		Playbook: pb,
-		Live:     true, // explicitly armed live
+		Live:     true, // legacy persisted value; cannot enable real-money trading
 	}
 }
 
-// TestSaveLoadPersistsLiveArmAndVoice proves the owner's deliberate live-arm and their
-// voice preference survive the save -> load round trip. Before the fix, SecretConfigFrom
-// dropped r.Live and LoadSetup hardcoded Live:false, so an owner who configured a live
-// broker and armed live silently came back up on paper after a restart, and the voice
-// choice was lost. (Going live still requires a deliberate per-session confirmation in the
-// trade loop — persisting the arm only means BUCKS REMEMBERS the intent, never that it
-// auto-trades live on boot.)
+// TestSaveLoadPersistsLiveArmAndVoice proves legacy data and the voice preference
+// survive a save/load round trip. Preserving Live does not enable real-money trading.
 func TestSaveLoadPersistsLiveArmAndVoice(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "bucks.yaml")
@@ -61,12 +53,12 @@ func TestSaveLoadPersistsLiveArmAndVoice(t *testing.T) {
 		t.Fatalf("LoadSetup: %v", err)
 	}
 	if !got.Live {
-		t.Error("live-arm was DROPPED on the round trip — owner armed live but loaded back as paper")
+		t.Error("legacy Live value was dropped on the round trip")
 	}
 	if !got.VoiceEnabled {
 		t.Error("voice preference was DROPPED on the round trip")
 	}
-	// The live broker creds still round-trip verbatim (the arm is useless without them).
+	// Legacy broker credentials still round-trip verbatim for data compatibility.
 	if len(got.Brokers) != 1 || got.Brokers[0].Kind != tui.BrokerAlpacaLive {
 		t.Fatalf("live broker did not round-trip: %+v", got.Brokers)
 	}

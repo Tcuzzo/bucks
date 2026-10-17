@@ -19,7 +19,7 @@ BASE="https://github.com/${REPO}/releases/latest/download"
 
 # ---- clean header (no ASCII animal) -----------------------------------------
 echo "BUCKS installer"
-echo "PAPER mode by default, going live is your choice."
+echo "Paper trading only. bucks cannot place real-money orders."
 echo
 
 # ---- detect OS + arch -------------------------------------------------------

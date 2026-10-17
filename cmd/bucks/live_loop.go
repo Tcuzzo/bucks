@@ -138,10 +138,9 @@ func firstBootNoFillCursor() time.Time {
 	return time.Unix(0, 0).UTC()
 }
 
-// liveTraderResult is what buildLiveTrader produced. When Trader is nil the loop was NOT
-// started (Reason says why, in plain English) — the SAFE outcome for a real-money venue that
-// the owner has not explicitly confirmed this session. LiveActive is true only when a
-// real-money venue is actually armed (so the caller can shout it in logs / the dashboard).
+// liveTraderResult is what buildLiveTrader produced. When Trader is nil the loop
+// was not started and Reason says why. LiveActive is true only for a constructed
+// real-money trader; current construction refuses every real-money venue.
 type liveTraderResult struct {
 	Trader     *harness.Trader
 	Broker     brokers.Broker
@@ -150,36 +149,31 @@ type liveTraderResult struct {
 	Reason     string
 }
 
-// buildLiveTrader constructs the trade loop's Trader from the owner's saved setup, with the
-// real broker built from their saved keys and the SAFETY GATE on real money wired in by
-// construction:
+// buildLiveTrader constructs the paper trade loop from the owner's saved setup:
 //
 //   - A PAPER venue (alpaca-paper) always runs — it cannot lose real money.
-//   - A REAL-MONEY venue (alpaca-live) runs ONLY when confirmLive is true (a deliberate
-//     per-session confirmation, e.g. `bucks --live`). Without it the loop is NOT started:
-//     no live broker is built, no order can be placed, and the caller is told why. This is
-//     the "never silently go live on boot" guarantee — persisting the arm only REMEMBERS the
-//     intent; a real order needs the explicit confirmation too.
+//   - A REAL-MONEY venue does not run. The broker contract cannot establish and
+//     verify the venue-side protective stop used for sizing, and the loop has no
+//     separate exit path, so construction stops before a live broker is built.
 //
 // The Trader is wired with the playbook's risk engine, the durable kill switch (next to the
 // config), the operator channel (alerts/reports/approvals), and a per-trade auto/approve band
-// sized from the playbook. LiveEnabled reflects whether real money is armed. ch is injected so
+// sized from the playbook. LiveEnabled is false because only paper reaches construction. ch is injected so
 // the daemon passes its gateway-wired channel and tests pass a mock.
 // ks is the SHARED durable kill switch. It MUST be the same instance the daemon's command
 // context uses, because IsHalted reads in-memory state — so an operator /halt only stops the
 // loop when both sides share one switch. A nil ks means "open my own" (standalone/tests).
-func buildLiveTrader(r tui.SetupResult, configPath string, ch channel.Channel, confirmLive bool, ks *risk.KillSwitch) (liveTraderResult, error) {
+func buildLiveTrader(r tui.SetupResult, configPath string, ch channel.Channel, _ bool, ks *risk.KillSwitch) (liveTraderResult, error) {
 	if len(r.Brokers) == 0 {
 		return liveTraderResult{Reason: "no broker configured — run setup to add one"}, nil
 	}
 	creds := r.Brokers[0]
 
-	// SAFETY GATE: a real-money venue requires an explicit per-session confirmation. Without
-	// it, do not build the live broker or start the loop — there is nothing that can place a
-	// real order. (Paper venues fall through and run freely.)
-	if isLiveBroker(creds.Kind) && !confirmLive {
+	// Real-money construction is disabled even when the operator confirms live
+	// trading. Paper venues fall through and keep the complete trading loop.
+	if isLiveBroker(creds.Kind) {
 		return liveTraderResult{
-			Reason: "configured for LIVE (real money) but not confirmed this session — staying safe; start live trading deliberately with `bucks --live`",
+			Reason: "refusing to arm LIVE (real money): bucks' broker contract cannot make the venue hold and verify the protective stop that trade sizing assumes, and bucks has no separate exit path to close an open position. Re-enable only after the broker adapters support verified venue-side bracket/OCO protection end to end and bucks has a tested exit path",
 		}, nil
 	}
 
@@ -207,7 +201,8 @@ func buildLiveTrader(r tui.SetupResult, configPath string, ch channel.Channel, c
 	// NOTE: reconcile-on-boot seeding (broker.Positions) happens at LOOP START in
 	// startTradeLoop — a network call that must not run during pure construction.
 
-	liveActive := isLiveBroker(creds.Kind) // true here only means: real venue AND confirmed
+	// The real-money guard above makes this construction path paper-only.
+	liveActive := false
 	trader, err := harness.NewTrader(harness.TraderConfig{
 		StrategyName:    "bucks-live",
 		Engine:          risk.NewEngine(r.Playbook.ToRiskConfig()),
@@ -271,16 +266,26 @@ var tradeLoopInterval = 15 * time.Second
 // func (cancel + wait for the loop to drain) the caller defers. It builds the safety-gated
 // Trader and runs it on a ticker with the monitor-only decider (the safe default: it watches
 // real equity, enforces the drawdown gate + kill switch, and reports — but opens no trade
-// until a trading policy is wired). When a real-money venue is unconfirmed, or no broker is
-// configured, it logs the reason and is a no-op. A run error is logged, never fatal.
+// until a trading policy is wired). When construction refuses a broker, it logs
+// and alerts the reason, then becomes a no-op. A run error is logged, never fatal.
 func startTradeLoop(configPath string, r tui.SetupResult, ch channel.Channel, confirmLive bool, ks *risk.KillSwitch, logf func(string, ...any)) func() {
 	res, err := buildLiveTrader(r, configPath, ch, confirmLive, ks)
 	if err != nil {
 		logf("trade loop: not started: %v", err)
+		_ = ch.SendAlert(context.Background(), channel.Alert{
+			Level: channel.AlertCritical,
+			Text:  fmt.Sprintf("Trade loop not started: %v", err),
+			Time:  time.Now().UTC(),
+		})
 		return func() {}
 	}
 	if res.Trader == nil {
 		logf("trade loop: %s", res.Reason)
+		_ = ch.SendAlert(context.Background(), channel.Alert{
+			Level: channel.AlertCritical,
+			Text:  "Trade loop not started: " + res.Reason,
+			Time:  time.Now().UTC(),
+		})
 		return func() {}
 	}
 	var reconciler fillReconciler
@@ -316,11 +321,7 @@ func startTradeLoop(configPath string, r tui.SetupResult, ch channel.Channel, co
 	src := newAccountSourceWithAlerts(res.Broker, buildDecider(r, res.Broker, logf), ticker.C, res.Store, reconciler, time.Now, ch, logf)
 	go func() {
 		defer close(done)
-		mode := "paper"
-		if res.LiveActive {
-			mode = "LIVE (real money)"
-		}
-		logf("trade loop: running (%s) — watching the account, enforcing drawdown + kill switch", mode)
+		logf("trade loop: running (paper) — watching the account, enforcing drawdown + kill switch")
 		if rerr := res.Trader.Run(ctx, src); rerr != nil && ctx.Err() == nil {
 			logf("trade loop: stopped with error: %v", rerr)
 		}

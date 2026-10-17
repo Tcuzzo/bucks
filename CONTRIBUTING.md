@@ -1,6 +1,6 @@
 # Contributing to BUCKS
 
-BUCKS is real-money software: paper by default, honest by design, one static binary.
+BUCKS is paper-only trading software: honest by design, one static binary.
 Contributions are welcome under the same discipline.
 
 ## Build and test
@@ -23,8 +23,8 @@ if your change needs a server, use `httptest` like the rest of the suite.
 
 ## Ground rules
 
-- **Never weaken a safety rail.** The paper/live gate, the per-session live
-  confirmation, the risk band, the kill switch, and the Telegram approval flow are
+- **Never weaken a safety rail.** The real-money broker refusal, the risk band,
+  the kill switch, and the Telegram approval flow are
   the product. A test proving your change keeps them intact beats a paragraph
   explaining why it probably does.
 - **Tests come with the change.** A fix ships with the test that fails without it.

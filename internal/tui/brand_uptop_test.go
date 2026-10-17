@@ -21,7 +21,7 @@ func TestDashboardShowsBuckWordmarkUpTop(t *testing.T) {
 		if banner < 0 {
 			t.Fatalf("%s: dashboard must render the BUCKS block wordmark", tc.name)
 		}
-		locator := strings.Index(v, "live dashboard")
+		locator := strings.Index(v, "trading dashboard")
 		if locator < 0 || banner > locator {
 			t.Errorf("%s: BUCKS wordmark must be UP TOP, above the locator (banner@%d, locator@%d)",
 				tc.name, banner, locator)
